@@ -1,0 +1,2057 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0"/>
+<meta name="description" content="moon.c — Precision lunar mechanics. Real-time moon phase, illumination, distance, moonrise/moonset."/>
+<meta property="og:title" content="moon.c — Precision Lunar Mechanics"/>
+<meta property="og:image" content="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/FullMoon2010.jpg/1024px-FullMoon2010.jpg"/>
+<title>moon.c — Precision Lunar Mechanics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+/* ═══════════════════════════════════════
+   RESET & VARIABLES
+═══════════════════════════════════════ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --ac:#fcee9f; --acr:252,238,159; --bg:#020207;
+  --s1:rgba(255,255,255,0.04); --s2:rgba(255,255,255,0.08);
+  --b1:rgba(255,255,255,0.08); --b2:rgba(255,255,255,0.15);
+  --t1:rgba(255,255,255,0.92); --t2:rgba(255,255,255,0.55); --t3:rgba(255,255,255,0.28);
+  --ease:cubic-bezier(0.16,1,0.3,1);
+  --hh:62px; --r1:10px; --r2:16px; --r3:24px;
+}
+body.tm-supermoon{--ac:#fcee9f;--acr:252,238,159;--bg:#020207}
+body.tm-bloodmoon{--ac:#ff3e3e;--acr:255,62,62;  --bg:#0b0404}
+body.tm-bluemoon {--ac:#4eb5ff;--acr:78,181,255; --bg:#02060f}
+body.tm-eclipse  {--ac:#d4af37;--acr:212,175,55; --bg:#050503}
+
+html{scroll-behavior:smooth;scroll-padding-top:80px}
+body{
+  background:var(--bg); color:var(--t1);
+  font-family:'Plus Jakarta Sans',system-ui,sans-serif;
+  font-size:16px; line-height:1.6;
+  overflow-x:hidden; min-height:100vh;
+  transition:background .6s var(--ease);
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+}
+@media(prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms!important;transition-duration:.01ms!important}
+}
+
+/* ═══════════════════════════════════════
+   STARFIELD
+═══════════════════════════════════════ */
+#starCanvas{
+  position:fixed;inset:0;width:100%;height:100%;
+  pointer-events:none;z-index:0;
+}
+
+/* ═══════════════════════════════════════
+   LOADER SCREEN
+═══════════════════════════════════════ */
+#loader{
+  position:fixed;inset:0;z-index:9999;
+  background:#020207;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:32px;
+  transition:opacity .8s var(--ease),visibility .8s;
+}
+#loader.gone{opacity:0;visibility:hidden;pointer-events:none}
+.loader-moon-wrap{position:relative;width:160px;height:160px}
+.loader-glow{
+  position:absolute;inset:-20px;border-radius:50%;
+  background:radial-gradient(circle,rgba(252,238,159,.25),transparent 70%);
+  animation:lGlow 2s ease-in-out infinite;
+}
+@keyframes lGlow{0%,100%{transform:scale(1);opacity:.8}50%{transform:scale(1.12);opacity:.4}}
+#loaderCanvas{border-radius:50%;display:block;width:100%;height:100%;animation:lSpin 8s linear infinite}
+@keyframes lSpin{0%{filter:brightness(0.7)}50%{filter:brightness(1.1)}100%{filter:brightness(0.7)}}
+.loader-text{
+  font-family:'Cormorant Garamond',serif;
+  font-size:1.05rem;color:rgba(252,238,159,.7);
+  letter-spacing:.2em;text-transform:uppercase;
+  animation:lPulse 1.5s ease-in-out infinite;
+}
+@keyframes lPulse{0%,100%{opacity:.4}50%{opacity:1}}
+.loader-bar-wrap{width:200px;height:2px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden}
+.loader-bar{height:100%;width:0%;background:linear-gradient(90deg,transparent,#fcee9f);border-radius:2px;transition:width .4s var(--ease)}
+
+/* ═══════════════════════════════════════
+   GEO PERMISSION OVERLAY
+═══════════════════════════════════════ */
+#geoOverlay{
+  position:fixed;inset:0;z-index:8000;
+  background:rgba(0,0,0,.85);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  display:flex;align-items:center;justify-content:center;padding:24px;
+  opacity:0;pointer-events:none;
+  transition:opacity .45s var(--ease);
+}
+#geoOverlay.show{opacity:1;pointer-events:auto}
+.geo-card{
+  max-width:380px;width:100%;
+  background:rgba(8,8,20,.97);
+  border:1px solid rgba(255,255,255,.1);
+  border-radius:var(--r3);padding:36px 28px;
+  text-align:center;display:flex;flex-direction:column;gap:18px;
+  box-shadow:0 24px 64px rgba(0,0,0,.6);
+  animation:geoIn .5s var(--ease);
+}
+@keyframes geoIn{from{transform:scale(.9) translateY(20px);opacity:0}to{transform:none;opacity:1}}
+.geo-emoji{font-size:3rem;animation:geoBounce 2s ease-in-out infinite}
+@keyframes geoBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.geo-title{font-family:'Cormorant Garamond',serif;font-size:1.6rem;font-weight:600;color:var(--t1)}
+.geo-desc{font-size:.88rem;color:var(--t2);line-height:1.7}
+.geo-note{font-size:.75rem;color:var(--t3);line-height:1.6}
+.geo-btns{display:flex;flex-direction:column;gap:10px}
+.geo-allow{
+  padding:14px;border-radius:var(--r2);
+  background:rgba(252,238,159,.15);border:1px solid rgba(252,238,159,.3);
+  color:#fcee9f;font-size:.95rem;font-weight:600;cursor:pointer;
+  transition:background .25s,transform .2s;
+  font-family:'Plus Jakarta Sans',sans-serif;
+}
+.geo-allow:hover{background:rgba(252,238,159,.25);transform:translateY(-1px)}
+.geo-skip{
+  padding:12px;border-radius:var(--r2);
+  background:transparent;border:1px solid rgba(255,255,255,.08);
+  color:var(--t3);font-size:.85rem;cursor:pointer;
+  transition:background .25s,color .25s;
+  font-family:'Plus Jakarta Sans',sans-serif;
+}
+.geo-skip:hover{background:rgba(255,255,255,.05);color:var(--t2)}
+
+/* ═══════════════════════════════════════
+   GLASS
+═══════════════════════════════════════ */
+.glass{
+  background:var(--s1);border:1px solid var(--b1);
+  border-radius:var(--r2);
+  backdrop-filter:blur(20px) saturate(160%);
+  -webkit-backdrop-filter:blur(20px) saturate(160%);
+  box-shadow:0 8px 32px rgba(0,0,0,.35);
+  transition:border-color .4s var(--ease),background .4s var(--ease),box-shadow .4s var(--ease);
+}
+.glass:hover{
+  border-color:rgba(var(--acr),.22);
+  background:var(--s2);
+  box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 1px rgba(var(--acr),.1);
+}
+
+/* ═══════════════════════════════════════
+   HEADER
+═══════════════════════════════════════ */
+.hdr{
+  position:fixed;top:0;left:0;right:0;
+  height:var(--hh);z-index:200;
+  background:rgba(2,2,7,.88);
+  backdrop-filter:blur(28px) saturate(220%);
+  -webkit-backdrop-filter:blur(28px) saturate(220%);
+  border-bottom:1px solid var(--b1);
+  transition:background .4s;
+}
+.hdr-in{
+  max-width:1340px;margin:0 auto;padding:0 18px;
+  height:100%;display:flex;align-items:center;
+  justify-content:space-between;gap:14px;
+}
+.logo{
+  font-family:'Cormorant Garamond',serif;
+  font-size:1.6rem;font-weight:600;
+  letter-spacing:-.02em;color:var(--t1);flex-shrink:0;
+  cursor:pointer;
+}
+.logo-dot{color:var(--ac);transition:color .4s}
+.hijri{
+  flex:1;text-align:center;font-size:.74rem;
+  color:var(--t2);letter-spacing:.05em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.hdr-actions{display:flex;align-items:center;gap:7px;flex-shrink:0}
+.hbtn{
+  width:42px;height:42px;min-width:44px;min-height:44px;
+  border:1px solid var(--b1);border-radius:var(--r1);
+  background:var(--s1);color:var(--t2);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1rem;
+  transition:background .25s,border-color .25s,color .25s,transform .2s;
+}
+.hbtn:hover{background:var(--s2);border-color:rgba(var(--acr),.3);color:var(--ac);transform:translateY(-1px)}
+.hbtn:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.burger{
+  width:44px;height:44px;
+  border:1px solid var(--b1);border-radius:var(--r1);
+  background:var(--s1);cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:5px;
+  transition:background .25s,border-color .25s;
+}
+.burger:hover{background:var(--s2);border-color:rgba(var(--acr),.3)}
+.burger span{
+  display:block;width:18px;height:1.5px;
+  background:var(--t1);border-radius:2px;
+  transition:transform .32s var(--ease),opacity .25s,width .25s;
+}
+.burger.open span:nth-child(1){transform:translateY(6.5px) rotate(45deg)}
+.burger.open span:nth-child(2){opacity:0;width:0}
+.burger.open span:nth-child(3){transform:translateY(-6.5px) rotate(-45deg)}
+
+/* ═══════════════════════════════════════
+   NAV DRAWER
+═══════════════════════════════════════ */
+.nav-ovl{
+  position:fixed;inset:0;background:rgba(0,0,0,.65);
+  z-index:300;opacity:0;pointer-events:none;
+  transition:opacity .35s;
+  backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+}
+.nav-ovl.on{opacity:1;pointer-events:auto}
+.nav-drawer{
+  position:fixed;top:0;right:0;bottom:0;
+  width:min(350px,93vw);
+  background:rgba(5,5,15,.98);
+  backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);
+  border-left:1px solid var(--b1);
+  z-index:400;
+  transform:translateX(100%);
+  transition:transform .45s var(--ease);
+  overflow-y:auto;
+}
+.nav-drawer.on{transform:translateX(0)}
+.nav-in{padding:74px 24px 40px;display:flex;flex-direction:column;gap:30px}
+.nav-x{
+  position:absolute;top:14px;right:14px;
+  width:44px;height:44px;border:1px solid var(--b1);
+  border-radius:var(--r1);background:var(--s1);
+  color:var(--t2);cursor:pointer;font-size:1.1rem;
+  display:flex;align-items:center;justify-content:center;
+  transition:background .2s,color .2s;
+}
+.nav-x:hover{background:var(--s2);color:var(--t1)}
+.nav-links{display:flex;flex-direction:column;gap:4px}
+.nav-a{
+  display:block;padding:13px 16px;
+  border-radius:var(--r1);
+  font-family:'Cormorant Garamond',serif;
+  font-size:1.35rem;font-weight:600;color:var(--t1);
+  border:1px solid transparent;
+  transition:background .2s,border-color .2s,color .2s;text-decoration:none;
+}
+.nav-a:hover{background:var(--s2);border-color:var(--b2);color:var(--ac)}
+.nav-sc h4{
+  font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--t3);margin-bottom:10px;
+}
+.nav-sc li{
+  display:flex;align-items:center;gap:9px;
+  padding:5px 0;font-size:.8rem;color:var(--t2);
+}
+kbd{
+  display:inline-flex;align-items:center;justify-content:center;
+  padding:2px 8px;border:1px solid var(--b2);border-radius:5px;
+  font-family:'JetBrains Mono',monospace;font-size:.72rem;
+  color:var(--ac);background:var(--s1);min-width:28px;
+}
+.nav-themes{display:flex;flex-direction:column;gap:8px}
+.nav-thbtn{
+  display:flex;align-items:center;gap:10px;
+  padding:11px 14px;border:1px solid var(--b1);
+  border-radius:var(--r1);background:var(--s1);
+  color:var(--t2);font-size:.9rem;cursor:pointer;
+  width:100%;text-align:left;
+  transition:background .2s,border-color .2s,color .2s;
+  font-family:'Plus Jakarta Sans',sans-serif;
+}
+.nav-thbtn:hover,.nav-thbtn.on{
+  background:var(--s2);border-color:rgba(var(--acr),.3);color:var(--t1);
+}
+.th-dot{width:11px;height:11px;border-radius:50%;flex-shrink:0}
+
+/* ═══════════════════════════════════════
+   HERO
+═══════════════════════════════════════ */
+.hero{
+  position:relative;z-index:1;
+  padding-top:calc(var(--hh) + 36px);
+  padding-bottom:90px;min-height:100vh;
+}
+.hero-wrap{
+  max-width:1340px;margin:0 auto;padding:0 18px;
+  display:grid;grid-template-columns:1fr 1fr;
+  gap:44px;align-items:start;
+}
+
+/* ─── MOON COLUMN ─── */
+.moon-col{
+  display:flex;flex-direction:column;
+  align-items:center;gap:22px;
+  position:sticky;top:calc(var(--hh)+20px);
+}
+.moon-ring{
+  position:relative;
+  width:clamp(260px,42vw,420px);
+  height:clamp(260px,42vw,420px);
+}
+.moon-aura{
+  position:absolute;inset:-22px;border-radius:50%;
+  background:radial-gradient(circle,rgba(var(--acr),.24) 0%,transparent 68%);
+  animation:aura 4.5s ease-in-out infinite;
+  pointer-events:none;transition:background .6s var(--ease);
+}
+@keyframes aura{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(1.07)}}
+#moonCanvas{
+  display:block;width:100%;height:100%;
+  border-radius:50%;
+  filter:drop-shadow(0 0 30px rgba(var(--acr),.15));
+  transition:filter .6s var(--ease);
+}
+
+/* Phase name */
+.phase-wrap{width:100%;text-align:center}
+.ph-label{
+  font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--t3);margin-bottom:5px;
+}
+.ph-name{
+  font-family:'Cormorant Garamond',serif;
+  font-size:clamp(1.8rem,5vw,2.7rem);
+  font-weight:600;color:var(--ac);
+  letter-spacing:-.01em;margin-bottom:16px;
+  transition:color .4s var(--ease);
+  animation:fadeUp .7s var(--ease);
+}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.ph-track{width:100%;height:3px;background:var(--b1);border-radius:2px;overflow:hidden;margin-bottom:8px}
+.ph-fill{
+  height:100%;border-radius:2px;
+  background:linear-gradient(90deg,transparent,var(--ac));
+  transition:width 1.2s var(--ease),background .4s;
+}
+.ph-ticks{
+  display:flex;justify-content:space-between;
+  font-size:.61rem;color:var(--t3);
+}
+
+/* Countdown */
+.cd-card{width:100%;padding:16px 20px;text-align:center;border-radius:var(--r2)}
+.cd-ev-label{font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:var(--t3);margin-bottom:3px}
+.cd-ev-name{font-family:'Cormorant Garamond',serif;font-size:1rem;font-weight:600;color:var(--ac);margin-bottom:4px;transition:color .4s}
+.cd-time{font-family:'JetBrains Mono',monospace;font-size:1.55rem;color:var(--t1);letter-spacing:.05em}
+
+/* Rise/Set */
+.rs-row{display:grid;grid-template-columns:1fr 1fr;gap:11px;width:100%}
+.rs-card{padding:14px 16px;display:flex;align-items:center;gap:12px;border-radius:var(--r2)}
+.rs-icon{font-size:1.2rem;color:var(--ac);flex-shrink:0;transition:color .4s}
+.rs-lbl{font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin-bottom:2px}
+.rs-val{font-family:'JetBrains Mono',monospace;font-size:1.05rem;color:var(--t1)}
+
+/* Geo status */
+.geo-st{display:flex;align-items:center;gap:8px;font-size:.74rem;color:var(--t3);cursor:pointer}
+.geo-st:hover{color:var(--t2)}
+.g-dot{width:7px;height:7px;border-radius:50%;background:#555;flex-shrink:0;transition:background .3s}
+.g-dot.ok{background:#4ade80}
+.g-dot.err{background:#f87171}
+.g-dot.spin{background:var(--ac);animation:spin-dot 1.1s ease-in-out infinite}
+@keyframes spin-dot{0%,100%{opacity:1}50%{opacity:.2}}
+
+/* Geo ask button */
+.geo-ask-btn{
+  display:flex;align-items:center;gap:8px;
+  padding:10px 16px;border-radius:var(--r1);
+  border:1px solid rgba(var(--acr),.25);
+  background:rgba(var(--acr),.08);
+  color:var(--ac);font-size:.8rem;cursor:pointer;
+  transition:background .25s,border-color .25s;
+  font-family:'Plus Jakarta Sans',sans-serif;
+  width:100%;justify-content:center;
+}
+.geo-ask-btn:hover{background:rgba(var(--acr),.15);border-color:rgba(var(--acr),.4)}
+
+/* ─── DATA COLUMN ─── */
+.data-col{display:flex;flex-direction:column;gap:17px}
+
+/* Metrics */
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.met{padding:20px 17px;border-radius:var(--r2);position:relative;overflow:hidden}
+.met::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,rgba(var(--acr),.03),transparent);
+  pointer-events:none;transition:background .4s;
+}
+.met-ico{font-size:1.25rem;margin-bottom:9px;color:var(--ac);transition:color .4s;display:block}
+.met-lbl{font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:5px}
+.met-val{
+  font-family:'JetBrains Mono',monospace;
+  font-size:1.4rem;font-weight:500;
+  color:var(--t1);margin-bottom:3px;
+  letter-spacing:-.02em;
+  transition:all .4s var(--ease);
+}
+.met-sub{font-size:.68rem;color:var(--t3)}
+
+/* Obs tips */
+.obs{padding:20px 22px;border-radius:var(--r2)}
+.obs-t{font-family:'Cormorant Garamond',serif;font-size:1.08rem;font-weight:600;color:var(--ac);margin-bottom:9px;transition:color .4s}
+.obs-b{font-size:.86rem;color:var(--t2);line-height:1.75}
+
+/* Calendar */
+.cal{padding:20px}
+.cal-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px}
+.cal-title{font-family:'Cormorant Garamond',serif;font-size:1.05rem;font-weight:600;color:var(--t1)}
+.cal-btn{
+  width:44px;height:44px;border:1px solid var(--b1);
+  border-radius:8px;background:var(--s1);
+  color:var(--t2);cursor:pointer;font-size:1.05rem;
+  display:flex;align-items:center;justify-content:center;
+  transition:background .2s,border-color .2s,color .2s;
+}
+.cal-btn:hover{background:var(--s2);border-color:rgba(var(--acr),.3);color:var(--ac)}
+.cal-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:5px}
+.cal-dow span{text-align:center;font-size:.64rem;color:var(--t3);padding:3px 0}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.cday{
+  aspect-ratio:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  border-radius:7px;font-size:.7rem;color:var(--t2);
+  cursor:default;padding:1px;
+  transition:background .15s;
+}
+.cday:hover{background:var(--s2)}
+.cday.today{
+  background:rgba(var(--acr),.16);
+  border:1px solid rgba(var(--acr),.3);
+  color:var(--ac);font-weight:600;
+}
+.cday.other{color:var(--t3);opacity:.35}
+.cday .pi{font-size:.56rem;line-height:1;display:block}
+.cday .dn{font-size:.68rem}
+
+/* Theme strip */
+.th-strip{padding:15px}
+.th-strip-lbl{font-size:.64rem;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:10px}
+.th-strip-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.th-btn{
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:10px 5px;border:1px solid var(--b1);
+  border-radius:var(--r1);background:var(--s1);
+  color:var(--t3);font-size:.68rem;cursor:pointer;
+  transition:background .22s,border-color .22s,color .22s,transform .2s;
+  min-height:44px;font-family:'Plus Jakarta Sans',sans-serif;
+}
+.th-btn:hover,.th-btn.on{
+  background:var(--s2);
+  border-color:rgba(var(--acr),.32);
+  color:var(--t1);
+  transform:translateY(-1px);
+}
+.th-sw{width:13px;height:13px;border-radius:50%;display:block}
+
+/* ═══════════════════════════════════════
+   SECTIONS
+═══════════════════════════════════════ */
+.sec{position:relative;z-index:1;padding:100px 0;border-top:1px solid var(--b1)}
+.sec-in{max-width:1340px;margin:0 auto;padding:0 18px}
+.sec-head{text-align:center;margin-bottom:52px}
+.sec-eye{
+  font-size:.68rem;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--ac);margin-bottom:11px;
+  transition:color .4s;display:block;
+}
+.sec-title{
+  font-family:'Cormorant Garamond',serif;
+  font-size:clamp(2rem,4.5vw,3.2rem);
+  font-weight:600;color:var(--t1);
+  margin-bottom:13px;line-height:1.14;
+}
+.sec-sub{
+  font-size:.96rem;color:var(--t2);
+  max-width:600px;margin:0 auto;line-height:1.72;
+}
+
+/* ═══════════════════════════════════════
+   ARTICLES
+═══════════════════════════════════════ */
+.art-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.art-card{
+  padding:23px;border-radius:var(--r2);cursor:pointer;
+  display:flex;flex-direction:column;gap:10px;
+  position:relative;overflow:hidden;
+  transition:transform .38s var(--ease),box-shadow .38s var(--ease),
+    border-color .38s var(--ease),background .38s var(--ease);
+}
+.art-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--ac),transparent);
+  opacity:0;transition:opacity .38s var(--ease);
+}
+.art-card:hover{transform:translateY(-5px);box-shadow:0 22px 48px rgba(0,0,0,.4)}
+.art-card:hover::before{opacity:1}
+.art-card:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.art-n{font-family:'JetBrains Mono',monospace;font-size:.64rem;color:var(--ac);letter-spacing:.08em;transition:color .4s}
+.art-cat{
+  display:inline-block;font-size:.62rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--t3);
+  border:1px solid var(--b1);border-radius:4px;
+  padding:2px 7px;width:fit-content;
+}
+.art-title{
+  font-family:'Cormorant Garamond',serif;
+  font-size:1.12rem;font-weight:600;
+  color:var(--t1);line-height:1.3;flex:1;
+}
+.art-exc{
+  font-size:.8rem;color:var(--t2);line-height:1.65;
+  display:-webkit-box;-webkit-line-clamp:3;
+  -webkit-box-orient:vertical;overflow:hidden;
+}
+.art-more{
+  font-size:.76rem;color:var(--ac);margin-top:auto;
+  transition:color .4s;
+  display:flex;align-items:center;gap:5px;
+}
+.art-more::after{content:'→';transition:transform .25s}
+.art-card:hover .art-more::after{transform:translateX(4px)}
+
+/* ═══════════════════════════════════════
+   THEMES SECTION
+═══════════════════════════════════════ */
+.th-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.th-card{
+  padding:28px 22px;border-radius:var(--r3);
+  display:flex;flex-direction:column;gap:13px;
+  position:relative;overflow:hidden;
+  transition:transform .38s var(--ease),box-shadow .38s var(--ease);
+}
+.th-card:hover{transform:translateY(-7px);box-shadow:0 28px 56px rgba(0,0,0,.4)}
+.th-card-bg{
+  position:absolute;top:0;left:0;right:0;height:55%;
+  border-radius:var(--r3) var(--r3) 60% 60%;
+  pointer-events:none;
+}
+.th-card-ico{font-size:2.2rem;position:relative;z-index:1}
+.th-card-title{
+  font-family:'Cormorant Garamond',serif;
+  font-size:1.35rem;font-weight:600;
+  color:var(--t1);position:relative;z-index:1;
+}
+.th-card-desc{
+  font-size:.83rem;color:var(--t2);
+  line-height:1.7;position:relative;z-index:1;flex:1;
+}
+.th-card-foot{
+  display:flex;align-items:center;
+  justify-content:space-between;gap:10px;
+  flex-wrap:wrap;position:relative;z-index:1;
+}
+.badge{
+  font-size:.65rem;letter-spacing:.07em;
+  border:1px solid;border-radius:4px;padding:3px 8px;
+}
+.apply{
+  padding:8px 14px;border-radius:8px;
+  border:1px solid var(--b1);background:var(--s1);
+  color:var(--t2);font-size:.78rem;cursor:pointer;
+  transition:background .22s,border-color .22s,color .22s;
+  min-height:44px;font-family:'Plus Jakarta Sans',sans-serif;
+}
+.apply:hover{background:var(--s2);border-color:rgba(var(--acr),.3);color:var(--t1)}
+
+/* ═══════════════════════════════════════
+   SOURCES
+═══════════════════════════════════════ */
+.src-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:32px}
+.src-grp h3{
+  font-family:'Cormorant Garamond',serif;
+  font-size:1.05rem;font-weight:600;
+  color:var(--ac);margin-bottom:14px;
+  padding-bottom:9px;border-bottom:1px solid var(--b1);
+  transition:color .4s;
+}
+.src-list{display:flex;flex-direction:column;gap:14px}
+.src-list a{font-size:.86rem;color:var(--ac);display:block;margin-bottom:3px}
+.src-list p{font-size:.78rem;color:var(--t3);line-height:1.5}
+
+/* ═══════════════════════════════════════
+   FOOTER
+═══════════════════════════════════════ */
+footer{
+  position:relative;z-index:1;
+  border-top:1px solid var(--b1);
+  padding:40px 0;background:rgba(0,0,0,.22);
+}
+.foot-in{
+  max-width:1340px;margin:0 auto;padding:0 18px;
+  text-align:center;display:flex;flex-direction:column;gap:8px;
+}
+.foot-algo{font-size:.76rem;color:var(--t3)}
+.foot-copy{font-size:.83rem;color:var(--t2);font-family:'JetBrains Mono',monospace}
+.foot-ver{font-size:.7rem;color:var(--t3);letter-spacing:.04em}
+
+/* ═══════════════════════════════════════
+   ARTICLE MODAL
+═══════════════════════════════════════ */
+.m-bd{
+  position:fixed;inset:0;background:rgba(0,0,0,.74);
+  z-index:500;opacity:0;pointer-events:none;
+  transition:opacity .38s;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+}
+.m-bd.on{opacity:1;pointer-events:auto}
+.art-modal{
+  position:fixed;top:0;right:0;bottom:0;
+  width:min(720px,98vw);
+  background:rgba(4,4,14,.99);
+  backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);
+  border-left:1px solid var(--b1);
+  z-index:600;
+  transform:translateX(100%);
+  transition:transform .5s var(--ease);
+  overflow-y:auto;-webkit-overflow-scrolling:touch;
+}
+.art-modal.on{transform:translateX(0)}
+.am-in{padding:72px 48px 60px;position:relative}
+.m-x{
+  position:absolute;top:18px;right:18px;
+  width:44px;height:44px;
+  border:1px solid var(--b1);border-radius:var(--r1);
+  background:var(--s1);color:var(--t2);
+  cursor:pointer;font-size:1.1rem;
+  display:flex;align-items:center;justify-content:center;
+  transition:background .2s,color .2s;
+}
+.m-x:hover{background:var(--s2);color:var(--t1)}
+.m-cat{
+  display:inline-block;font-size:.68rem;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ac);
+  border:1px solid rgba(var(--acr),.3);
+  border-radius:5px;padding:3px 10px;margin-bottom:18px;
+  transition:color .4s,border-color .4s;
+}
+.m-title{
+  font-family:'Cormorant Garamond',serif;
+  font-size:clamp(1.65rem,3.5vw,2.3rem);
+  font-weight:600;color:var(--t1);
+  line-height:1.2;margin-bottom:28px;
+}
+.m-body{font-size:.96rem;color:var(--t2);line-height:1.88}
+.m-body p{margin-bottom:1.4em}
+.m-body p:last-child{margin-bottom:0}
+
+/* ═══════════════════════════════════════
+   EMBED MODAL
+═══════════════════════════════════════ */
+.emb-modal{
+  position:fixed;inset:0;z-index:700;
+  display:flex;align-items:center;justify-content:center;padding:20px;
+  opacity:0;pointer-events:none;transition:opacity .38s;
+}
+.emb-modal.on{opacity:1;pointer-events:auto}
+.emb-in{
+  position:relative;max-width:540px;width:100%;
+  padding:38px;border-radius:var(--r3);
+}
+.emb-title{font-family:'Cormorant Garamond',serif;font-size:1.5rem;font-weight:600;margin-bottom:9px;color:var(--t1)}
+.emb-desc{font-size:.85rem;color:var(--t2);margin-bottom:15px}
+.emb-code{
+  background:rgba(0,0,0,.5);border:1px solid var(--b1);
+  border-radius:var(--r1);padding:15px;
+  font-family:'JetBrains Mono',monospace;font-size:.74rem;
+  color:var(--t2);overflow-x:auto;white-space:pre;
+  margin-bottom:15px;outline:none;
+}
+.copy-btn{
+  width:100%;padding:13px;
+  background:rgba(var(--acr),.12);
+  border:1px solid rgba(var(--acr),.28);
+  border-radius:var(--r1);color:var(--ac);
+  font-size:.9rem;font-weight:500;cursor:pointer;
+  transition:background .22s,border-color .22s;min-height:44px;
+  font-family:'Plus Jakarta Sans',sans-serif;
+}
+.copy-btn:hover{background:rgba(var(--acr),.22)}
+
+/* ═══════════════════════════════════════
+   TOAST
+═══════════════════════════════════════ */
+#toast{
+  position:fixed;bottom:24px;left:50%;
+  transform:translateX(-50%) translateY(100px);
+  background:rgba(12,12,24,.97);
+  border:1px solid var(--b2);border-radius:50px;
+  padding:12px 24px;font-size:.86rem;color:var(--t1);
+  z-index:9000;
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  box-shadow:0 8px 32px rgba(0,0,0,.55);
+  transition:transform .42s var(--ease),opacity .42s;
+  opacity:0;pointer-events:none;white-space:nowrap;
+}
+#toast.on{transform:translateX(-50%) translateY(0);opacity:1}
+
+/* ═══════════════════════════════════════
+   SCROLL REVEAL
+═══════════════════════════════════════ */
+.rv{opacity:0;transform:translateY(28px);transition:opacity .7s var(--ease),transform .7s var(--ease)}
+.rv.vis{opacity:1;transform:none}
+
+/* ═══════════════════════════════════════
+   RESPONSIVE
+═══════════════════════════════════════ */
+@media(max-width:1060px){
+  .th-grid{grid-template-columns:repeat(2,1fr)}
+  .art-grid{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:880px){
+  .hero-wrap{grid-template-columns:1fr;gap:30px}
+  .moon-col{position:static}
+  .moon-ring{width:min(360px,88vw);height:min(360px,88vw);margin:0 auto}
+  .src-grid{grid-template-columns:1fr}
+}
+@media(max-width:640px){
+  :root{--hh:56px}
+  .hijri{display:none}
+  .art-grid{grid-template-columns:1fr}
+  .th-grid{grid-template-columns:1fr}
+  .metrics{grid-template-columns:1fr 1fr;gap:10px}
+  .met{padding:15px 13px}
+  .met-val{font-size:1.15rem}
+  .am-in{padding:58px 20px 44px}
+  .emb-in{padding:30px 20px}
+  .sec{padding:65px 0}
+  .art-modal{width:100%;border-left:none}
+}
+@media(max-width:380px){
+  .metrics{grid-template-columns:1fr}
+  .rs-row{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body class="tm-supermoon">
+
+<!-- STARFIELD -->
+<canvas id="starCanvas" aria-hidden="true"></canvas>
+
+<!-- LOADER -->
+<div id="loader" aria-live="polite" aria-label="Loading moon.c">
+  <div class="loader-moon-wrap">
+    <div class="loader-glow"></div>
+    <canvas id="loaderCanvas" width="160" height="160" aria-hidden="true"></canvas>
+  </div>
+  <div class="loader-text" id="loaderText">Calculating lunar position…</div>
+  <div class="loader-bar-wrap">
+    <div class="loader-bar" id="loaderBar"></div>
+  </div>
+</div>
+
+<!-- GEO PERMISSION OVERLAY -->
+<div id="geoOverlay" aria-modal="true" role="dialog" aria-labelledby="geoTitle">
+  <div class="geo-card">
+    <div class="geo-emoji" aria-hidden="true">📍</div>
+    <h2 class="geo-title" id="geoTitle">Enable Location</h2>
+    <p class="geo-desc">moon.c uses your location to calculate precise moonrise and moonset times for your city.</p>
+    <p class="geo-note">Your location is only used locally in your browser and is never sent to any server.</p>
+    <div class="geo-btns">
+      <button class="geo-allow" id="geoAllowBtn">Allow Location Access</button>
+      <button class="geo-skip" id="geoSkipBtn">Skip — Use London as default</button>
+    </div>
+  </div>
+</div>
+
+<!-- HEADER -->
+<header class="hdr" role="banner">
+  <div class="hdr-in">
+    <div class="logo" tabindex="0" role="link" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="moon.c home">moon<span class="logo-dot">.</span>c</div>
+    <div class="hijri" id="hijriDate" aria-live="polite"></div>
+    <div class="hdr-actions">
+      <button class="hbtn" id="printBtn" aria-label="Print lunar report" title="Print">🖨</button>
+      <button class="hbtn" id="embedBtn" aria-label="Embed widget" title="Embed">&lt;/&gt;</button>
+      <button class="hbtn" id="shareBtn" aria-label="Share" title="Share" style="display:none">⬆</button>
+      <button class="burger" id="menuBtn" aria-label="Open navigation menu" aria-expanded="false" aria-controls="navDrawer">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- NAV -->
+<div class="nav-ovl" id="navOvl" aria-hidden="true"></div>
+<nav class="nav-drawer" id="navDrawer" aria-hidden="true" role="navigation" aria-label="Main navigation">
+  <div class="nav-in">
+    <button class="nav-x" id="navX" aria-label="Close menu">✕</button>
+    <ul class="nav-links" role="list">
+      <li><a href="#hero"     class="nav-a" tabindex="-1">Lunar Engine</a></li>
+      <li><a href="#articles" class="nav-a" tabindex="-1">Moon Science</a></li>
+      <li><a href="#themes"   class="nav-a" tabindex="-1">Event Themes</a></li>
+      <li><a href="#sources"  class="nav-a" tabindex="-1">Sources</a></li>
+    </ul>
+    <div class="nav-sc">
+      <h4>Keyboard Shortcuts</h4>
+      <ul>
+        <li><kbd>1</kbd> Supermoon theme</li>
+        <li><kbd>2</kbd> Blood Moon theme</li>
+        <li><kbd>3</kbd> Blue Moon theme</li>
+        <li><kbd>4</kbd> Eclipse theme</li>
+        <li><kbd>Esc</kbd> Close</li>
+      </ul>
+    </div>
+    <div class="nav-themes" role="group" aria-label="Color themes">
+      <button class="nav-thbtn on" data-theme="supermoon" aria-pressed="true"><span class="th-dot" style="background:#fcee9f"></span>Supermoon</button>
+      <button class="nav-thbtn" data-theme="bloodmoon" aria-pressed="false"><span class="th-dot" style="background:#ff3e3e"></span>Blood Moon</button>
+      <button class="nav-thbtn" data-theme="bluemoon"  aria-pressed="false"><span class="th-dot" style="background:#4eb5ff"></span>Blue Moon</button>
+      <button class="nav-thbtn" data-theme="eclipse"   aria-pressed="false"><span class="th-dot" style="background:#d4af37"></span>Eclipse</button>
+    </div>
+  </div>
+</nav>
+
+<!-- MAIN -->
+<main>
+
+<!-- HERO -->
+<section class="hero" id="hero" aria-label="Lunar engine">
+  <div class="hero-wrap">
+
+    <!-- LEFT: Moon Visual -->
+    <div class="moon-col">
+      <div class="moon-ring">
+        <div class="moon-aura" id="moonAura" aria-hidden="true"></div>
+        <canvas id="moonCanvas" width="400" height="400"
+          role="img" aria-label="Photorealistic moon phase visualization"
+          aria-describedby="phaseName"></canvas>
+      </div>
+
+      <div class="phase-wrap">
+        <p class="ph-label">Current Phase</p>
+        <h1 class="ph-name" id="phaseName">—</h1>
+        <div aria-label="Lunar cycle progress">
+          <div class="ph-track"><div class="ph-fill" id="phFill" style="width:0"></div></div>
+          <div class="ph-ticks" aria-hidden="true">
+            <span>New</span><span>First Qtr</span><span>Full</span><span>Last Qtr</span><span>New</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass cd-card">
+        <p class="cd-ev-label">Next Event</p>
+        <p class="cd-ev-name" id="evName">—</p>
+        <p class="cd-time" id="evTime" aria-live="polite">—</p>
+      </div>
+
+      <div class="rs-row">
+        <div class="glass rs-card">
+          <span class="rs-icon" aria-hidden="true">☀</span>
+          <div><p class="rs-lbl">Moonrise</p><p class="rs-val" id="moonrise" aria-live="polite">—</p></div>
+        </div>
+        <div class="glass rs-card">
+          <span class="rs-icon" aria-hidden="true">🌙</span>
+          <div><p class="rs-lbl">Moonset</p><p class="rs-val" id="moonset" aria-live="polite">—</p></div>
+        </div>
+      </div>
+
+      <button class="geo-ask-btn" id="geoAskBtn" aria-label="Request location access for accurate moonrise and moonset times">
+        <span>📍</span> Tap to enable precise moonrise/set times
+      </button>
+      <div class="geo-st" id="geoSt" style="display:none">
+        <span class="g-dot spin" id="gDot"></span>
+        <span id="gTxt">Locating…</span>
+      </div>
+    </div>
+
+    <!-- RIGHT: Data -->
+    <div class="data-col">
+      <div class="metrics" role="list" aria-label="Lunar metrics">
+        <div class="glass met" role="listitem">
+          <span class="met-ico" aria-hidden="true">◐</span>
+          <p class="met-lbl">Illumination</p>
+          <p class="met-val" id="illum" aria-live="polite">—</p>
+          <p class="met-sub" id="illumSub">—</p>
+        </div>
+        <div class="glass met" role="listitem">
+          <span class="met-ico" aria-hidden="true">⊙</span>
+          <p class="met-lbl">Distance</p>
+          <p class="met-val" id="dist" aria-live="polite">—</p>
+          <p class="met-sub" id="distSub">—</p>
+        </div>
+        <div class="glass met" role="listitem">
+          <span class="met-ico" aria-hidden="true">◷</span>
+          <p class="met-lbl">Lunar Age</p>
+          <p class="met-val" id="lunarAge" aria-live="polite">—</p>
+          <p class="met-sub">days since New Moon</p>
+        </div>
+        <div class="glass met" role="listitem">
+          <span class="met-ico" aria-hidden="true">→</span>
+          <p class="met-lbl">Orbital Velocity</p>
+          <p class="met-val" id="velocity" aria-live="polite">—</p>
+          <p class="met-sub">km/s orbital speed</p>
+        </div>
+      </div>
+
+      <div class="glass obs" aria-label="Observation tips">
+        <h2 class="obs-t">Observation Tips</h2>
+        <p class="obs-b" id="obsTips">Calculating optimal conditions…</p>
+      </div>
+
+      <div class="glass cal" aria-label="Moon phase calendar">
+        <div class="cal-hdr">
+          <button class="cal-btn" id="calPrev" aria-label="Previous month">‹</button>
+          <h2 class="cal-title" id="calTitle">—</h2>
+          <button class="cal-btn" id="calNext" aria-label="Next month">›</button>
+        </div>
+        <div class="cal-dow" aria-hidden="true">
+          <span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
+        </div>
+        <div class="cal-grid" id="calGrid" role="grid" aria-label="Monthly moon phase calendar"></div>
+      </div>
+
+      <div class="glass th-strip">
+        <p class="th-strip-lbl">Event Theme</p>
+        <div class="th-strip-row" role="group" aria-label="Color themes">
+          <button class="th-btn on" data-theme="supermoon" aria-pressed="true"><span class="th-sw" style="background:#fcee9f"></span>Super</button>
+          <button class="th-btn"    data-theme="bloodmoon" aria-pressed="false"><span class="th-sw" style="background:#ff3e3e"></span>Blood</button>
+          <button class="th-btn"    data-theme="bluemoon"  aria-pressed="false"><span class="th-sw" style="background:#4eb5ff"></span>Blue</button>
+          <button class="th-btn"    data-theme="eclipse"   aria-pressed="false"><span class="th-sw" style="background:#d4af37"></span>Eclipse</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ARTICLES -->
+<section class="sec" id="articles" aria-labelledby="artH">
+  <div class="sec-in">
+    <div class="sec-head rv">
+      <span class="sec-eye">Lunar Encyclopedia</span>
+      <h2 class="sec-title" id="artH">Moon Science</h2>
+      <p class="sec-sub">Twenty peer-reviewed topics spanning geology, physics, exploration history, and cultural significance.</p>
+    </div>
+    <div class="art-grid" id="artGrid" role="list" aria-label="Scientific articles about the Moon"></div>
+  </div>
+</section>
+
+<!-- THEMES -->
+<section class="sec" id="themes" aria-labelledby="thmH">
+  <div class="sec-in">
+    <div class="sec-head rv">
+      <span class="sec-eye">Visual Guide</span>
+      <h2 class="sec-title" id="thmH">Lunar Event Themes</h2>
+      <p class="sec-sub">Each theme reflects a rare astronomical event with distinct visual character and scientific significance.</p>
+    </div>
+    <div class="th-grid">
+      <article class="glass th-card rv">
+        <div class="th-card-bg" style="background:rgba(252,238,159,.09)"></div>
+        <div class="th-card-ico">🌕</div>
+        <h3 class="th-card-title">Supermoon</h3>
+        <p class="th-card-desc">A full moon at perigee — the Moon's closest orbital approach to Earth. It appears up to 14% larger and 30% brighter than an average full moon. The November 2016 supermoon was the closest full moon since January 1948.</p>
+        <div class="th-card-foot">
+          <span class="badge" style="border-color:rgba(252,238,159,.35);color:#fcee9f">Perigee Full Moon</span>
+          <button class="apply" data-theme="supermoon" aria-label="Apply supermoon theme">Apply</button>
+        </div>
+      </article>
+      <article class="glass th-card rv">
+        <div class="th-card-bg" style="background:rgba(255,62,62,.09)"></div>
+        <div class="th-card-ico">🩸</div>
+        <h3 class="th-card-title">Blood Moon</h3>
+        <p class="th-card-desc">A total lunar eclipse where Earth completely blocks direct sunlight from the Moon. Sunlight filtered through Earth's atmosphere creates the characteristic deep red glow. Totality can last up to 104 minutes.</p>
+        <div class="th-card-foot">
+          <span class="badge" style="border-color:rgba(255,62,62,.35);color:#ff3e3e">Lunar Eclipse</span>
+          <button class="apply" data-theme="bloodmoon" aria-label="Apply blood moon theme">Apply</button>
+        </div>
+      </article>
+      <article class="glass th-card rv">
+        <div class="th-card-bg" style="background:rgba(78,181,255,.09)"></div>
+        <div class="th-card-ico">🔵</div>
+        <h3 class="th-card-title">Blue Moon</h3>
+        <p class="th-card-desc">The second full moon within a single calendar month, occurring roughly every 2.5 years. Despite the name it appears no different in color. The phrase "once in a blue moon" reflects its rarity. Next: May 31, 2026.</p>
+        <div class="th-card-foot">
+          <span class="badge" style="border-color:rgba(78,181,255,.35);color:#4eb5ff">Second Full Moon</span>
+          <button class="apply" data-theme="bluemoon" aria-label="Apply blue moon theme">Apply</button>
+        </div>
+      </article>
+      <article class="glass th-card rv">
+        <div class="th-card-bg" style="background:rgba(212,175,55,.09)"></div>
+        <div class="th-card-ico">🌑</div>
+        <h3 class="th-card-title">Eclipse</h3>
+        <p class="th-card-desc">A solar eclipse occurs when the Moon passes directly between Earth and the Sun. During totality the Sun's corona — the outer plasma atmosphere — becomes visible to the naked eye. The path of totality is only ~160 km wide.</p>
+        <div class="th-card-foot">
+          <span class="badge" style="border-color:rgba(212,175,55,.35);color:#d4af37">Solar Eclipse</span>
+          <button class="apply" data-theme="eclipse" aria-label="Apply eclipse theme">Apply</button>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- SOURCES -->
+<section class="sec" id="sources" aria-labelledby="srcH">
+  <div class="sec-in">
+    <div class="sec-head rv">
+      <span class="sec-eye">Transparency</span>
+      <h2 class="sec-title" id="srcH">Sources &amp; References</h2>
+    </div>
+    <div class="src-grid">
+      <div class="rv">
+        <h3>Algorithms</h3>
+        <ul class="src-list">
+          <li><a href="https://www.willbell.com/math/mc1.HTM" target="_blank" rel="noopener">Jean Meeus — Astronomical Algorithms (2nd ed.)</a><p>Lunar phase, distance, moonrise/set calculations.</p></li>
+          <li><a href="https://aa.usno.navy.mil/data/MoonPhases" target="_blank" rel="noopener">USNO — Moon Phase Data</a><p>Epoch and synodic period validation.</p></li>
+          <li><a href="https://eclipse.gsfc.nasa.gov/lunar.html" target="_blank" rel="noopener">NASA GSFC — Lunar Eclipse Tables</a><p>Eclipse timing reference data.</p></li>
+        </ul>
+      </div>
+      <div class="rv">
+        <h3>Data Sources</h3>
+        <ul class="src-list">
+          <li><a href="https://ssd.jpl.nasa.gov/horizons/" target="_blank" rel="noopener">NASA JPL Horizons</a><p>High-precision ephemeris for validation.</p></li>
+          <li><a href="https://science.nasa.gov/moon/" target="_blank" rel="noopener">NASA Science — The Moon</a><p>Geology, exploration, and current missions.</p></li>
+          <li><a href="https://www.lpi.usra.edu/lunar/" target="_blank" rel="noopener">Lunar and Planetary Institute</a><p>Apollo sample data, crater catalogs.</p></li>
+        </ul>
+      </div>
+      <div class="rv">
+        <h3>Images</h3>
+        <ul class="src-list">
+          <li><a href="https://commons.wikimedia.org/wiki/File:FullMoon2010.jpg" target="_blank" rel="noopener">Wikimedia Commons — FullMoon2010.jpg</a><p>CC BY-SA 3.0. Photography by Gregory H. Revera.</p></li>
+        </ul>
+      </div>
+      <div class="rv">
+        <h3>Literature</h3>
+        <ul class="src-list">
+          <li><a href="https://www.nature.com/collections/lunar-science" target="_blank" rel="noopener">Nature — Lunar Science Collection</a><p>Peer-reviewed lunar research articles.</p></li>
+          <li><a href="https://www.iers.org/" target="_blank" rel="noopener">IERS — Earth Orientation Parameters</a><p>Precession and nutation corrections.</p></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer role="contentinfo">
+  <div class="foot-in">
+    <p class="foot-algo">Algorithms based on Jean Meeus, <em>Astronomical Algorithms</em>. Data refreshes every 60 seconds.</p>
+    <p class="foot-copy">Copyright : mohamed005cheikh@gmail.com | by MC88</p>
+    <p class="foot-ver">Version 3.2.0 · moon.c Precision Lunar Mechanics</p>
+  </div>
+</footer>
+
+<!-- BACKDROPS & MODALS -->
+<div class="m-bd" id="mBd" aria-hidden="true"></div>
+
+<div class="art-modal" id="artModal" role="dialog" aria-modal="true"
+  aria-labelledby="mTitle" aria-hidden="true" tabindex="-1">
+  <div class="am-in">
+    <button class="m-x" id="mX" aria-label="Close article">✕</button>
+    <span class="m-cat" id="mCat"></span>
+    <h2 class="m-title" id="mTitle"></h2>
+    <div class="m-body" id="mBody"></div>
+  </div>
+</div>
+
+<div class="emb-modal" id="embModal" role="dialog" aria-modal="true"
+  aria-labelledby="embTitle" aria-hidden="true" tabindex="-1">
+  <div class="glass emb-in">
+    <button class="m-x" id="embX" style="position:absolute;top:14px;right:14px" aria-label="Close embed">✕</button>
+    <h2 class="emb-title" id="embTitle">Embed Widget</h2>
+    <p class="emb-desc">Copy this code to embed the moon widget on any website:</p>
+    <pre class="emb-code" id="embCode" tabindex="0"></pre>
+    <button class="copy-btn" id="copyBtn" aria-label="Copy embed code">Copy Code</button>
+  </div>
+</div>
+
+<div id="toast" role="alert" aria-live="polite" aria-atomic="true"></div>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   moon.c — Complete Application Logic
+   Version 3.2.0 | Copyright: mohamed005cheikh@gmail.com | by MC88
+══════════════════════════════════════════════════════ */
+(function(){
+'use strict';
+
+/* ── CONSTANTS ────────────────────────────────── */
+var SYNODIC = 29.53058867;
+var EPOCH   = Date.UTC(2000,0,6,18,14,0);
+var MS_DAY  = 86400000;
+var TEX_URL = 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/FullMoon2010.jpg/1024px-FullMoon2010.jpg';
+var MONTHS  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+var LOADERMSGS = [
+  'Calculating lunar position…',
+  'Measuring orbital velocity…',
+  'Mapping the terminator line…',
+  'Computing moonrise times…',
+  'Rendering the lunar surface…',
+  'Almost ready…'
+];
+
+/* ── STATE ────────────────────────────────────── */
+var ST = {
+  lat:51.5074, lon:-0.1278, geoOk:false, geoAsked:false,
+  tex:null, texOk:false,
+  theme:'supermoon',
+  calY:new Date().getFullYear(), calM:new Date().getMonth(),
+  stars:[], lastStar:0,
+  lastPhase:-99, lastTexOk:false,
+  menuOpen:false, modalOpen:false,
+  nextDays:0,
+  _toastT:null, _countT:null, _mainT:null
+};
+
+/* ── HELPERS ──────────────────────────────────── */
+function el(id){ return document.getElementById(id); }
+function pad(n){ return String(Math.floor(Math.abs(n))).padStart(2,'0'); }
+function r2d(r){ return r*180/Math.PI; }
+function d2r(d){ return d*Math.PI/180; }
+function daysSince(date){ return (date.getTime()-EPOCH)/MS_DAY; }
+function setText(id,v){ var e=el(id); if(e) e.textContent=v; }
+
+/* ── LOADER ───────────────────────────────────── */
+var loaderProgress = 0;
+function advanceLoader(pct, msg){
+  loaderProgress = Math.max(loaderProgress, pct);
+  var bar = el('loaderBar');
+  if(bar) bar.style.width = loaderProgress + '%';
+  if(msg){ var lt = el('loaderText'); if(lt) lt.textContent = msg; }
+}
+
+function hideLoader(){
+  var l = el('loader');
+  if(l){ l.classList.add('gone'); }
+}
+
+/* Animate the loader moon */
+(function(){
+  var c = el('loaderCanvas');
+  if(!c) return;
+  var ctx = c.getContext('2d');
+  var W = 160, cx = 80, cy = 80, r = 76;
+  var phase = 0, tick = 0;
+
+  function drawLoader(){
+    ctx.clearRect(0,0,W,W);
+    /* base */
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.fillStyle='#0a0a18'; ctx.fill();
+    /* surface */
+    var g = ctx.createRadialGradient(cx-r*.2,cy-r*.2,0,cx,cy,r);
+    g.addColorStop(0,'#ccc'); g.addColorStop(.7,'#aaa'); g.addColorStop(1,'#777');
+    ctx.save(); ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
+    ctx.fillStyle=g; ctx.fill();
+    /* shadow */
+    var isW = phase<0.5;
+    var grd = ctx.createLinearGradient(cx-r,cy,cx+r,cy);
+    if(isW){
+      var t = 0.5 - phase;
+      grd.addColorStop(Math.max(0,t-.07),'rgba(0,0,0,0)');
+      grd.addColorStop(Math.min(1,t+.07),'rgba(0,0,0,.94)');
+      grd.addColorStop(1,'rgba(0,0,0,.94)');
+    } else {
+      var t2 = phase - 0.5;
+      grd.addColorStop(0,'rgba(0,0,0,.94)');
+      grd.addColorStop(Math.max(0,t2-.07),'rgba(0,0,0,.94)');
+      grd.addColorStop(Math.min(1,t2+.07),'rgba(0,0,0,0)');
+    }
+    ctx.fillStyle=grd; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+    /* limb */
+    var lg = ctx.createRadialGradient(cx,cy,r*.6,cx,cy,r);
+    lg.addColorStop(0,'rgba(0,0,0,0)'); lg.addColorStop(1,'rgba(0,0,0,.45)');
+    ctx.fillStyle=lg; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+    tick++;
+    phase = (tick*0.003) % 1;
+    requestAnimationFrame(drawLoader);
+  }
+  requestAnimationFrame(drawLoader);
+})();
+
+/* ── LUNAR MATH ───────────────────────────────── */
+function lunarPhase(date){
+  var d = daysSince(date);
+  var p = (d/SYNODIC) % 1;
+  return p<0 ? p+1 : p;
+}
+function lunarIllum(ph){
+  return (1-Math.cos(ph*2*Math.PI))/2*100;
+}
+function lunarDist(date){
+  var d = daysSince(date);
+  var M = d2r(((134.963+13.064993*d)%360+360)%360);
+  var e = 0.0549;
+  var v = M + 2*e*Math.sin(M) + 1.25*e*e*Math.sin(2*M);
+  return Math.round(384400*(1-e*e)/(1+e*Math.cos(v)));
+}
+function lunarVel(ph){
+  return (1.022+0.05*Math.cos(ph*2*Math.PI)).toFixed(3);
+}
+function phaseName(p){
+  if(p<0.025||p>=0.975) return 'New Moon';
+  if(p<0.225) return 'Waxing Crescent';
+  if(p<0.275) return 'First Quarter';
+  if(p<0.475) return 'Waxing Gibbous';
+  if(p<0.525) return 'Full Moon';
+  if(p<0.725) return 'Waning Gibbous';
+  if(p<0.775) return 'Last Quarter';
+  return 'Waning Crescent';
+}
+function phaseIcon(p){
+  if(p<0.0625) return '🌑';
+  if(p<0.1875) return '🌒';
+  if(p<0.3125) return '🌓';
+  if(p<0.4375) return '🌔';
+  if(p<0.5625) return '🌕';
+  if(p<0.6875) return '🌖';
+  if(p<0.8125) return '🌗';
+  if(p<0.9375) return '🌘';
+  return '🌑';
+}
+function nextEvents(phase){
+  var tgts=[
+    {name:'New Moon',frac:0},{name:'First Quarter',frac:0.25},
+    {name:'Full Moon',frac:0.5},{name:'Last Quarter',frac:0.75}
+  ];
+  return tgts.map(function(t){
+    var d=(t.frac-phase+1)%1; if(!d) d=1;
+    return {name:t.name, days:d*SYNODIC};
+  }).sort(function(a,b){return a.days-b.days;});
+}
+function obsTips(ph,illum,dist){
+  var tip='';
+  if(illum<5)       tip='New Moon — maximum darkness for deep-sky observation. Galaxies, nebulae and star clusters are at their most accessible. The earthshine on the thin crescent is beautiful through binoculars.';
+  else if(illum<25) tip='Waxing Crescent — the Moon sets shortly after sunset, leaving long windows of dark sky. Excellent for Milky Way photography. Observe earthshine on the night side through binoculars.';
+  else if(illum<50) tip='Quarter phase — the terminator (boundary between light and dark) reveals spectacular crater shadows and mountain peaks. Optimal for surface detail; craters like Clavius and Tycho are striking.';
+  else if(illum<75) tip='Waxing Gibbous — rich crater detail near the terminator rewards high magnification. The mare boundaries are well defined. Consider photographing the Moon rising against the horizon for dramatic perspective.';
+  else if(illum<95) tip='Near Full Moon — the bright ray systems of Tycho and Copernicus span the disc visibly. Albedo contrasts between maria and highlands are at their most pronounced for naked-eye viewing.';
+  else              tip='Full Moon — the brightest nights of the month, ideal for landscape and wildlife photography under moonlight. The rayed craters are at maximum brilliance. The Moon photographed at moonrise appears dramatically enlarged near the horizon.';
+  if(dist<362000)   tip+=' The Moon is near perigee and appears noticeably larger — a supermoon condition.';
+  else if(dist>404000) tip+=' The Moon is near apogee and slightly smaller than its average apparent size.';
+  return tip;
+}
+
+/* ── MOONRISE / MOONSET ───────────────────────── */
+function moonRiseSet(date,lat,lon){
+  try{
+    var JD = date.getTime()/86400000+2440587.5;
+    var T  = (JD-2451545)/36525;
+    var L  = ((218.3164477+481267.88123421*T)%360+360)%360;
+    var M  = d2r(((357.5291092+35999.0502909*T)%360+360)%360);
+    var Mp = d2r(((134.9633964+477198.8676313*T)%360+360)%360);
+    var D  = d2r(((297.8501921+445267.1114034*T)%360+360)%360);
+    var F  = d2r(((93.2720950+483202.0175233*T)%360+360)%360);
+    var lam=L+(-1.274*Math.sin(Mp-2*D))+(0.658*Math.sin(2*D))+(-0.186*Math.sin(M))
+            +(-0.059*Math.sin(2*Mp-2*D))+(-0.057*Math.sin(Mp-2*D+M))+(0.053*Math.sin(Mp+2*D))
+            +(0.046*Math.sin(2*D-M))+(0.041*Math.sin(Mp-M))+(-0.035*Math.sin(D))
+            +(-0.031*Math.sin(Mp+M))+(0.015*Math.sin(2*F-2*D));
+    var bet=(-5.128*Math.sin(F))+(-0.280*Math.sin(Mp+F))+(-0.277*Math.sin(Mp-F))
+            +(-0.173*Math.sin(F+2*D))+(-0.055*Math.sin(Mp-F-2*D));
+    var eps=d2r(23.4393-0.013004*T);
+    var lamR=d2r(lam),betR=d2r(bet);
+    var RA=Math.atan2(Math.sin(lamR)*Math.cos(eps)-Math.tan(betR)*Math.sin(eps),Math.cos(lamR));
+    var decl=Math.asin(Math.sin(betR)*Math.cos(eps)+Math.cos(betR)*Math.sin(eps)*Math.sin(lamR));
+    var h0=d2r(-0.566), latR=d2r(lat);
+    var cosH=(Math.sin(h0)-Math.sin(latR)*Math.sin(decl))/(Math.cos(latR)*Math.cos(decl));
+    if(cosH<-1) return{rise:'Circumpolar',set:'—'};
+    if(cosH>1)  return{rise:'Below horizon',set:'—'};
+    var H=r2d(Math.acos(cosH));
+    var JD0=Math.floor(JD-0.5)+0.5, T0=(JD0-2451545)/36525;
+    var th0=((100.4606184+36000.77004*T0+0.000387933*T0*T0)%360+360)%360;
+    var RAd=r2d(RA);
+    var m0=((RAd-lon-th0)%360+360)%360/360;
+    var mR=((m0-H/360)%1+1)%1, mS=((m0+H/360)%1+1)%1;
+    function fmt(frac){
+      var d2=new Date(date); d2.setHours(0,0,0,0);
+      d2.setTime(d2.getTime()+frac*86400000);
+      return d2.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false});
+    }
+    return{rise:fmt(mR),set:fmt(mS)};
+  }catch(e){ return{rise:'—',set:'—'}; }
+}
+
+/* ── HIJRI DATE ───────────────────────────────── */
+function hijriDate(date){
+  try{
+    return new Intl.DateTimeFormat('en-TN-u-ca-islamic-umalqura',
+      {day:'numeric',month:'long',year:'numeric'}).format(date);
+  }catch(e){
+    try{ return new Intl.DateTimeFormat('en-u-ca-islamic',
+      {day:'numeric',month:'long',year:'numeric'}).format(date); }
+    catch(e2){ return ''; }
+  }
+}
+
+/* ── STARFIELD ────────────────────────────────── */
+function initStars(){
+  var c=el('starCanvas'); if(!c) return;
+  c.width=window.innerWidth; c.height=window.innerHeight;
+  ST.stars=[];
+  var n=window.innerWidth<640?120:260;
+  var layers=[
+    {count:Math.floor(n*.6),minR:.3,maxR:.75,minA:.28,maxA:.65,sp:.18},
+    {count:Math.floor(n*.3),minR:.6,maxR:1.1,minA:.48,maxA:.85,sp:.48},
+    {count:Math.floor(n*.1),minR:1.0,maxR:1.7,minA:.6,maxA:1,sp:1}
+  ];
+  var seed=7919;
+  function rng(){ seed=(seed*1664525+1013904223)&0x7fffffff; return seed/0x7fffffff; }
+  layers.forEach(function(l){
+    for(var i=0;i<l.count;i++){
+      ST.stars.push({x:rng(),y:rng(),r:l.minR+rng()*(l.maxR-l.minR),
+        a:l.minA+rng()*(l.maxA-l.minA),sp:l.sp,
+        to:rng()*Math.PI*2,ts:.4+rng()*1.4});
+    }
+  });
+}
+
+function drawStars(ts){
+  var c=el('starCanvas'); if(!c) return;
+  if(ts-ST.lastStar<100){requestAnimationFrame(drawStars);return;}
+  ST.lastStar=ts;
+  var ctx=c.getContext('2d'); var W=c.width,H=c.height;
+  ctx.clearRect(0,0,W,H);
+  var t=ts*.001;
+  ST.stars.forEach(function(s){
+    var yo=(t*s.sp*.003)%1;
+    var dy=((s.y+yo)%1)*H;
+    var tw=.7+.3*Math.sin(t*s.ts+s.to);
+    ctx.beginPath(); ctx.arc(s.x*W,dy,s.r,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,255,'+(s.a*tw).toFixed(2)+')';
+    ctx.fill();
+  });
+  requestAnimationFrame(drawStars);
+}
+
+/* ── MOON CANVAS ──────────────────────────────── */
+function loadTexture(){
+  var img=new Image();
+  img.crossOrigin='anonymous';
+  img.onload=function(){ ST.tex=img; ST.texOk=true; ST.lastPhase=-99; renderMoon(); };
+  img.onerror=function(){ ST.texOk=false; ST.lastPhase=-99; renderMoon(); };
+  img.src=TEX_URL;
+}
+
+function renderMoon(){
+  var c=el('moonCanvas'); if(!c) return;
+  var now=new Date();
+  var phase=lunarPhase(now);
+  /* Only re-render if something changed */
+  if(Math.abs(phase-ST.lastPhase)<0.0001 && ST.texOk===ST.lastTexOk) return;
+  ST.lastPhase=phase; ST.lastTexOk=ST.texOk;
+
+  var size=c.width, ctx=c.getContext('2d');
+  var cx=size/2, cy=size/2, r=size/2-1;
+  ctx.clearRect(0,0,size,size);
+
+  /* 1. Dark sphere base */
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+  ctx.fillStyle='#060612'; ctx.fill();
+  ctx.restore();
+
+  /* 2. Texture or procedural */
+  if(ST.texOk && ST.tex){
+    drawTexture(ctx,cx,cy,r,phase);
+  } else {
+    drawProcedural(ctx,cx,cy,r,phase);
+  }
+
+  /* 3. Illumination mask */
+  applyTerminator(ctx,cx,cy,r,phase);
+
+  /* 4. Limb darkening */
+  applyLimb(ctx,cx,cy,r);
+
+  /* 5. Glow */
+  updateAura(phase);
+}
+
+function drawTexture(ctx,cx,cy,r,phase){
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
+  /* rotate texture slightly based on phase for realism */
+  ctx.translate(cx,cy);
+  ctx.rotate((phase-0.5)*0.25);
+  ctx.drawImage(ST.tex,-r,-r,r*2,r*2);
+  ctx.restore();
+}
+
+function drawProcedural(ctx,cx,cy,r,phase){
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
+
+  /* Base surface */
+  var bg=ctx.createRadialGradient(cx-r*.22,cy-r*.22,0,cx,cy,r);
+  bg.addColorStop(0,'#d4d4d4'); bg.addColorStop(.5,'#aaaaaa'); bg.addColorStop(1,'#747474');
+  ctx.fillStyle=bg; ctx.fill();
+
+  /* Maria */
+  var maria=[
+    [.44,.42,.27,.44],[.36,.35,.30,.40],[.30,.53,.23,.38],
+    [.56,.50,.17,.33],[.28,.63,.31,.40],[.49,.59,.15,.30],
+    [.40,.27,.14,.29],[.60,.63,.12,.26]
+  ];
+  maria.forEach(function(m){
+    var mx=cx+(m[0]-.5)*r*2, my=cy+(m[1]-.5)*r*2, mr=m[2]*r;
+    var g=ctx.createRadialGradient(mx,my,0,mx,my,mr);
+    g.addColorStop(0,'rgba(72,72,80,'+m[3]+')');
+    g.addColorStop(.7,'rgba(100,100,110,'+(m[3]*.7)+')');
+    g.addColorStop(1,'rgba(145,145,150,0)');
+    ctx.fillStyle=g;
+    ctx.beginPath(); ctx.ellipse(mx,my,mr,mr*.73,.33,0,Math.PI*2); ctx.fill();
+  });
+
+  /* Craters (golden-angle deterministic) */
+  var GA=Math.PI*(3-Math.sqrt(5));
+  for(var i=0;i<48;i++){
+    var rf=Math.sqrt((i+.5)/48);
+    var ang=i*GA;
+    var cr=rf*r*.88;
+    var x2=cx+cr*Math.cos(ang), y2=cy+cr*Math.sin(ang);
+    var rr=(4+(i*19+37)%17)*r/200;
+    ctx.beginPath(); ctx.arc(x2,y2,rr,0,Math.PI*2);
+    ctx.strokeStyle='rgba(215,215,215,'+(0.25+(i%5)*.04)+')';
+    ctx.lineWidth=0.6; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x2,y2,rr*.6,0,Math.PI*2);
+    ctx.fillStyle='rgba(90,90,100,'+(0.16+(i%7)*.03)+')'; ctx.fill();
+  }
+  ctx.restore();
+}
+
+function applyTerminator(ctx,cx,cy,r,phase){
+  if(phase<0.015||phase>0.985){
+    /* Near-new: almost fully dark */
+    ctx.save(); ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
+    ctx.fillStyle='rgba(0,0,0,.97)'; ctx.fill(); ctx.restore(); return;
+  }
+
+  ctx.save(); ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
+  var isWax=phase<0.5;
+  var grad=ctx.createLinearGradient(cx-r,cy,cx+r,cy);
+
+  if(isWax){
+    /* Waxing: lit side RIGHT, shadow LEFT */
+    var litFrac=phase*2;          /* 0→1 over waxing half */
+    var termNorm=0.5-litFrac*0.5; /* 0.5→0 (0=full right, 0.5=left edge) */
+    var feather=0.07;
+    grad.addColorStop(0,'rgba(0,0,0,.96)');
+    grad.addColorStop(Math.max(0,termNorm-feather),'rgba(0,0,0,.96)');
+    grad.addColorStop(Math.min(1,termNorm+feather),'rgba(0,0,0,0)');
+    grad.addColorStop(1,'rgba(0,0,0,0)');
+  } else {
+    /* Waning: lit side LEFT, shadow RIGHT */
+    var litFrac2=(1-phase)*2;     /* 1→0 over waning half */
+    var termNorm2=0.5+litFrac2*0.5;
+    var feather2=0.07;
+    grad.addColorStop(0,'rgba(0,0,0,0)');
+    grad.addColorStop(Math.max(0,termNorm2-feather2),'rgba(0,0,0,0)');
+    grad.addColorStop(Math.min(1,termNorm2+feather2),'rgba(0,0,0,.96)');
+    grad.addColorStop(1,'rgba(0,0,0,.96)');
+  }
+
+  ctx.fillStyle=grad;
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function applyLimb(ctx,cx,cy,r){
+  ctx.save(); ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
+  var g=ctx.createRadialGradient(cx,cy,r*.52,cx,cy,r);
+  g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,.50)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function updateAura(phase){
+  var a=el('moonAura'); if(!a) return;
+  var illum=lunarIllum(phase)/100;
+  a.style.opacity=(0.3+illum*.7).toFixed(2);
+}
+
+/* ── UI UPDATE ────────────────────────────────── */
+function updateUI(){
+  var now=new Date();
+  var phase=lunarPhase(now);
+  var illum=lunarIllum(phase);
+  var dist=lunarDist(now);
+  var name=phaseName(phase);
+  var age=(phase*SYNODIC).toFixed(1);
+  var vel=lunarVel(phase);
+  var evts=nextEvents(phase);
+  var rs=moonRiseSet(now,ST.lat,ST.lon);
+
+  /* Phase */
+  setText('phaseName',name);
+  var fill=el('phFill');
+  if(fill) fill.style.width=(phase*100).toFixed(2)+'%';
+
+  /* Metrics */
+  setText('illum',illum.toFixed(1)+'%');
+  setText('illumSub',name);
+  setText('dist',dist.toLocaleString()+' km');
+  var diff=dist-384400;
+  setText('distSub',(diff>=0?'+':'')+diff.toLocaleString()+' km vs mean');
+  setText('lunarAge',age+' d');
+  setText('velocity',vel+' km/s');
+
+  /* Obs tips */
+  setText('obsTips',obsTips(phase,illum,dist));
+
+  /* Countdown */
+  if(evts.length>0){
+    setText('evName',evts[0].name);
+    ST.nextDays=evts[0].days;
+  }
+
+  /* Rise/Set */
+  setText('moonrise',rs.rise);
+  setText('moonset',rs.set);
+
+  /* Hijri */
+  var hd=hijriDate(now);
+  var hEl=el('hijriDate');
+  if(hEl&&hd) hEl.textContent=hd+' AH';
+
+  /* Moon */
+  renderMoon();
+
+  /* Calendar */
+  buildCalendar();
+}
+
+/* ── COUNTDOWN TICKER ─────────────────────────── */
+function tickCountdown(){
+  if(ST.nextDays>0){
+    ST.nextDays-=1/86400;
+    var tot=ST.nextDays*86400;
+    var d=Math.floor(tot/86400);
+    var h=Math.floor((tot%86400)/3600);
+    var m=Math.floor((tot%3600)/60);
+    var s=Math.floor(tot%60);
+    var str=d>0
+      ? d+'d '+pad(h)+'h '+pad(m)+'m'
+      : pad(h)+':'+pad(m)+':'+pad(s);
+    setText('evTime',str);
+  }
+}
+
+/* ── CALENDAR ─────────────────────────────────── */
+function buildCalendar(){
+  var grid=el('calGrid'), title=el('calTitle');
+  if(!grid||!title) return;
+  var Y=ST.calY, M=ST.calM;
+  var today=new Date();
+  title.textContent=MONTHS[M]+' '+Y;
+
+  var first=new Date(Y,M,1);
+  var last=new Date(Y,M+1,0);
+  var startDow=first.getDay();
+  var frag=document.createDocumentFragment();
+
+  /* prev padding */
+  var pLast=new Date(Y,M,0).getDate();
+  for(var i=startDow-1;i>=0;i--){
+    frag.appendChild(makeCell(pLast-i,Y,M-1,true,false));
+  }
+  /* days */
+  for(var d=1;d<=last.getDate();d++){
+    var isT=d===today.getDate()&&M===today.getMonth()&&Y===today.getFullYear();
+    frag.appendChild(makeCell(d,Y,M,false,isT));
+  }
+  /* next padding */
+  var tot=startDow+last.getDate();
+  var rem=tot%7===0?0:7-tot%7;
+  for(var j=1;j<=rem;j++) frag.appendChild(makeCell(j,Y,M+1,true,false));
+
+  grid.innerHTML=''; grid.appendChild(frag);
+}
+
+function makeCell(day,Y,M,isOther,isToday){
+  var dt=new Date(Y,M,day);
+  var ph=lunarPhase(dt);
+  var ico=phaseIcon(ph);
+  var nm=phaseName(ph);
+  var div=document.createElement('div');
+  div.className='cday'+(isOther?' other':'')+(isToday?' today':'');
+  div.setAttribute('role','gridcell');
+  div.setAttribute('aria-label',day+' — '+nm);
+  var pi=document.createElement('span'); pi.className='pi'; pi.textContent=ico; pi.setAttribute('aria-hidden','true');
+  var dn=document.createElement('span'); dn.className='dn'; dn.textContent=day;
+  div.appendChild(pi); div.appendChild(dn);
+  return div;
+}
+
+/* ── ARTICLES ─────────────────────────────────── */
+var ARTICLES=[
+  {id:1,cat:'Formation',title:'The Giant Impact Hypothesis',
+   exc:'How a Mars-sized collision 4.5 billion years ago created the Moon from Earth\'s own mantle rock.',
+   body:'The Giant Impact Hypothesis is the leading scientific explanation for the Moon\'s origin. Approximately 4.5 billion years ago, a Mars-sized protoplanet called Theia struck the early Earth in a glancing collision of extraordinary violence. The impact vaporized much of both bodies, ejecting an immense cloud of rock and debris into Earth orbit. Over thousands of years this material coalesced under gravity to form the Moon.\n\nEvidence strongly supports this hypothesis. Lunar samples returned by Apollo missions share nearly identical oxygen isotope ratios with Earth — a chemical fingerprint that argues for a common origin. If the Moon had formed elsewhere and been captured, its isotopic composition would differ measurably.\n\nThe Moon\'s small iron core — only about 20% of its total radius — is explained by the impact: when Theia struck, the iron cores of both bodies merged into the young Earth, while lighter mantle rock was ejected into orbit. This explains the Moon\'s relatively low density compared to Earth.\n\nThe Moon is also notably depleted in volatile elements like water, sodium, and potassium. The enormous heat of the impact boiled these substances away from the ejected material before the Moon could incorporate them.\n\nComputer simulations consistently reproduce the Moon\'s mass, composition, and angular momentum when the impactor is modeled at about 10% of Earth\'s mass striking at a relatively low angle. More recent simulations suggest the collision may have been more energetic and direct, more thoroughly mixing both bodies — which explains the exceptionally close isotopic match between Earth and Moon.\n\nThe impact also left Earth with a rapid early rotation — one day lasting only about five hours — and placed the Moon initially far closer, perhaps only 15,000 to 25,000 kilometers away. Tidal friction has since slowed Earth\'s rotation and pushed the Moon outward at 3.8 centimeters per year, a recession measured precisely today by laser ranging experiments targeting retroreflectors left by Apollo astronauts.\n\nThe Giant Impact Hypothesis, despite its extraordinary violence, remains the most successful unified explanation for all observed properties of the Earth-Moon system.'},
+
+  {id:2,cat:'Geology',title:'Lunar Maria: Ancient Seas of Lava',
+   exc:'The dark plains covering 31% of the near side are vast basaltic lava fields formed 3 to 4 billion years ago.',
+   body:'The large dark regions visible on the Moon\'s near side are called maria — the Latin word for seas. Early astronomers imagined them to be actual bodies of water and gave them poetic names like Mare Tranquillitatis (Sea of Tranquility) and Oceanus Procellarum (Ocean of Storms). We now know they are ancient solidified lava plains formed by massive volcanic eruptions billions of years ago.\n\nThe maria formed between roughly 4.2 and 1.2 billion years ago, with peak activity between 3.5 and 3.0 billion years ago. During this period the lunar interior was still hot enough to generate large volumes of low-viscosity basaltic melt. This lava rose through fractures in the crust and flooded the floors of enormous impact basins, filling them to depths of several kilometers in some regions.\n\nThe total volume of mare basalt erupted onto the lunar surface is estimated at several million cubic kilometers. In some regions like Mare Imbrium the basalt may be more than five kilometers thick. The lava flowed so easily — with a viscosity similar to motor oil — that it spread hundreds of kilometers from its source vents.\n\nMare basalts differ compositionally from the ancient highlands. They are rich in iron, magnesium, and titanium, giving them their characteristic dark color. This contrasts with the lighter anorthosite of the highlands. Apollo 11 sampled high-titanium basalts from Mare Tranquillitatis; Apollo 12 and 15 found lower-titanium varieties elsewhere.\n\nMaria are almost entirely restricted to the near side, where the crust is thinner (30–40 km versus 60–70 km on the far side). This asymmetry allowed magma to breach the surface more easily where the overlying rock column was shorter.\n\nChina\'s Chang\'e-5 mission returned samples from Oceanus Procellarum in 2020 that date to only 1.96 billion years old — far younger than any Apollo samples — demonstrating that lunar volcanism continued far longer than previously thought, well into what had been considered the Moon\'s geologically quiet recent history.'},
+
+  {id:3,cat:'Orbital Mechanics',title:'Tidal Locking: Always the Same Face',
+   exc:'The Moon rotates exactly once per orbit — a gravitational synchrony that permanently hides its far side from Earth.',
+   body:'If you observe the Moon over many nights you notice something remarkable: despite its monthly journey around Earth, exactly the same features are always visible. The Moon never reveals its far side to Earth. This is not coincidence but the inevitable result of a gravitational process called tidal locking, or synchronous rotation.\n\nEarth\'s gravity does not pull uniformly on the Moon. Because the Moon has finite size, the side facing Earth experiences slightly stronger gravitational pull than the far side. This differential force deforms the Moon slightly, creating a tidal bulge — a slight elongation pointing toward Earth. Early in the Moon\'s history, when it was rotating faster than it orbited, this tidal bulge was continuously dragged forward by the rotation. Earth\'s gravity pulled backward on this misaligned bulge, acting as a brake on the spin.\n\nOver hundreds of millions of years this tidal friction slowed the Moon\'s rotation until it exactly matched the orbital period of 27.32 days. At that point the bulge aligned permanently toward Earth, the braking force vanished, and the Moon had reached tidal lock: one rotation per orbit.\n\nEarth is also being tidally locked to the Moon, but extremely slowly. The Moon\'s gravity creates tidal bulges in Earth\'s oceans. Because Earth rotates faster than the Moon orbits, these bulges are dragged ahead. The Moon pulls backward on them, gradually slowing Earth. Earth\'s day is lengthening by about 1.4 milliseconds per century. In roughly 50 billion years — long after the Sun has expanded into a red giant — Earth would show one permanent face to the Moon.\n\nTidal locking is common throughout the solar system. Most large moons around gas giants are tidally locked. The Moon\'s tidal lock had profound consequences for lunar science: the near side was mapped in detail from Earth over centuries while the far side remained completely unknown until the Soviet Luna 3 spacecraft photographed it in October 1959, revealing a strikingly different landscape dominated by ancient craters rather than the dark volcanic plains of the near side.'},
+
+  {id:4,cat:'Physics',title:'Earth\'s Tides: The Moon\'s Daily Grip',
+   exc:'The Moon\'s differential gravity deforms Earth\'s oceans into two bulges that produce two high tides and two low tides per day.',
+   body:'Twice daily in most coastal locations, the sea rises to high tide and retreats to low tide in a rhythm as ancient as Earth itself. This tidal pulse is primarily driven by the gravitational influence of the Moon — not by its total pull but by the difference in its pull across Earth\'s diameter.\n\nBecause gravity weakens with distance, the near side of Earth is pulled toward the Moon more strongly than Earth\'s center, and the far side less strongly still. This differential — the tidal force — stretches Earth along the Earth-Moon axis. The oceans, being fluid, respond much more dramatically than the solid rock, bulging outward both toward the Moon and directly away from it. As Earth rotates beneath these two permanent bulges, most locations pass through two high tides and two low tides approximately every 24 hours and 50 minutes. The extra 50 minutes occurs because the Moon moves eastward in its orbit while Earth rotates, requiring extra rotation to bring any location back under the tidal bulge.\n\nThe Sun also exerts tidal forces on Earth. Despite being 27 million times more massive than the Moon, the Sun is 389 times farther away. Since tidal force scales with the inverse cube of distance, the Sun\'s tidal effect is only 46% as strong as the Moon\'s. When Sun and Moon align at new and full moon, their forces combine to produce larger spring tides. At quarter phases they partially cancel to produce smaller neap tides.\n\nTidal zones — the intertidal regions exposed at low tide and submerged at high tide — host some of Earth\'s richest ecosystems. Evolutionary biologists argue that the rhythmic exposure of tidal pools may have been crucial in the transition of early organisms from sea to land.\n\nThe tidal energy transfer between Earth and Moon is enormous: approximately 3.75 terawatts of power continuously dissipated in the oceans, gradually slowing Earth and pushing the Moon outward at 3.8 cm per year — a rate measured to millimeter precision by lunar laser ranging.'},
+
+  {id:5,cat:'Astronomy',title:'Moon Phases: A 29.5-Day Journey',
+   exc:'The lunar cycle from new moon to full moon and back takes exactly 29.53 days — determined by orbital geometry, not the Moon\'s own light.',
+   body:'The Moon completes one full cycle of phases in 29.53058867 days — the synodic month. This differs from the sidereal month of 27.32 days (the time to complete one orbit relative to the stars) because Earth itself orbits the Sun. After the Moon completes one orbit relative to the stars, Earth has moved along its own orbit by about 27 degrees, so the Moon must travel further to realign with the Sun and complete a full phase cycle.\n\nPhases arise purely from geometry. The Moon emits no light of its own — it reflects sunlight. As it orbits Earth, the angle between Sun, Earth, and Moon changes continuously, causing different fractions of the illuminated hemisphere to face Earth.\n\nAt new moon the illuminated hemisphere faces entirely away from us. As the Moon moves eastward in its orbit over subsequent days, a thin crescent appears low in the western sky after sunset — the waxing crescent. About seven days after new moon, the first quarter presents exactly half the illuminated hemisphere, setting around midnight. The waxing gibbous phase shows more than half the lit side. At full moon the entire illuminated face is visible; the Moon rises near sunset and sets near sunrise. The waning gibbous, last quarter, and waning crescent phases follow symmetrically.\n\nAncient Babylonian astronomers had determined the synodic period accurately by the 5th century BCE. The Antikythera mechanism — a Greek astronomical computer from about 100 BCE — incorporated the 19-year Metonic cycle (235 synodic months equal almost exactly 19 solar years) to predict future moon phases with remarkable accuracy.\n\nFor observational astronomy the phase cycle is critical: bright moonlight washes out faint deep-sky objects. Astronomers plan their observing sessions around the lunar cycle, prioritizing the two-week window centered on new moon for deep-sky work, and the days around first and last quarter for lunar surface observation when the terminator creates maximum topographic contrast.'},
+
+  {id:6,cat:'Geology',title:'Impact Craters: The Moon\'s Memory',
+   exc:'Preserved for billions of years without erosion, the Moon\'s craters are an unedited archive of the solar system\'s bombardment history.',
+   body:'The Moon\'s surface is covered with impact craters ranging from microscopic pits to multi-ring basins thousands of kilometers wide. Unlike Earth, where plate tectonics, erosion, weathering, and volcanism continuously resurface the landscape, the Moon has preserved its craters for billions of years in extraordinary fidelity. The result is a geological archive of the bombardment history of the inner solar system — readable with a telescope from Earth\'s surface.\n\nCraters form when asteroids or comets strike at hypervelocities typically between 10 and 70 kilometers per second. The kinetic energy of the impactor is released almost instantaneously, vaporizing both impactor and surrounding rock. A shockwave propagates outward, compressing and then rebounding the target material. The explosion excavates a bowl-shaped cavity; ejecta are thrown outward to form a blanket of debris around the rim. For small craters the result is a simple bowl. Larger craters show central peaks formed when the floor rebounds upward after the impact. The largest impacts produce concentric rings of mountains surrounding vast lava-flooded interiors.\n\nThe largest impact structure on the Moon — the South Pole-Aitken basin on the far side — measures about 2,500 kilometers across and more than 8 kilometers deep. It is one of the largest confirmed impact structures in the entire solar system and may expose material from the Moon\'s deep mantle.\n\nRadiometric dating of Apollo samples established a calibration curve for the crater-counting technique used throughout planetary science. By counting craters per unit area and comparing with known-age surfaces on the Moon, scientists can estimate the age of any planetary surface where samples cannot be collected. This makes the Moon an indispensable reference point for understanding the age of surfaces on Mars, Mercury, and the moons of the outer solar system.\n\nThe cratering record also records the Late Heavy Bombardment — a period about 4.1 to 3.8 billion years ago when impact rates were dramatically elevated across the inner solar system, possibly triggered by gravitational instabilities among the giant planets.'},
+
+  {id:7,cat:'Resources',title:'Water on the Moon: Ice in Permanent Shadow',
+   exc:'Permanently shadowed polar craters harbor ancient ice deposits that could sustain human exploration and serve as rocket propellant.',
+   body:'For decades after the Apollo missions the Moon was believed completely dry. That assumption was overturned progressively through the 1990s and 2000s, culminating in definitive confirmation in 2009 that permanently shadowed polar craters contain substantial quantities of water ice.\n\nThe first hints came from the Clementine mission in 1994 and Lunar Prospector in 1998, both detecting anomalous hydrogen concentrations at the lunar poles. The LCROSS mission in October 2009 delivered the decisive evidence: a spent rocket stage was deliberately crashed into the permanently shadowed Cabeus crater near the south pole. The impact plume, analyzed spectroscopically, contained unmistakable water vapor and ice crystals at a concentration of roughly 5.6% by mass in the excavated material.\n\nWater survives in permanently shadowed regions because the lunar poles have an axial tilt of only about 1.5 degrees. The floors of deep polar craters lie in permanent darkness, maintaining temperatures below -230 degrees Celsius — cold enough to trap and retain ice for billions of years. Volatile molecules arriving from comets, asteroids, or solar wind interactions can become permanently frozen there.\n\nIn 2020 NASA\'s SOFIA airborne observatory detected water molecules in the sunlit Clavius crater region at about 73 degrees south latitude — challenging assumptions that water could only survive in permanent shadow. The same year China\'s Chang\'e-5 samples from Oceanus Procellarum contained water-bearing glass beads formed by meteorite impacts, suggesting the regolith may hold distributed water across much of the surface.\n\nThe implications for exploration are profound: water ice can be electrolyzed into hydrogen and oxygen, providing rocket propellant and breathable atmosphere. A lunar water extraction facility could dramatically reduce the cost of sustained human presence. NASA\'s Artemis program specifically targets the lunar south pole for this reason, and the VIPER rover is mapping polar ice deposits in preparation for in-situ resource extraction.'},
+
+  {id:8,cat:'Geophysics',title:'Moonquakes: A Not-So-Quiet World',
+   exc:'Apollo seismometers recorded thousands of moonquakes over eight years, revealing an unexpectedly active lunar interior.',
+   body:'Before Apollo, scientists assumed the Moon was geologically dead — cold, static, inert. The seismometers deployed by Apollo astronauts from 1969 to 1972 told a very different story. Over eight years of operation until 1977, the Apollo Passive Seismic Experiment recorded thousands of seismic events, revealing a Moon with surprising internal activity.\n\nMoonquakes fall into four categories. Deep moonquakes occur at depths of 700 to 1,200 kilometers, triggered by tidal forces from Earth. They are small in magnitude but extraordinarily persistent: where earthquake waves ring for a few minutes before dampening, deep moonquakes ring for an hour or more. The cold, dry, rigid lunar interior scatters seismic energy very poorly, allowing waves to reverberate repeatedly. These events cluster at specific locations and occur preferentially at predictable orbital phases, confirming the tidal trigger.\n\nShallow moonquakes are rarer but potentially dangerous — they reach magnitudes of 5 to 5.5 and occur at depths of 20 to 30 kilometers. Their cause remains uncertain but likely involves stress release in the cooling, contracting lunar crust along ancient fault systems.\n\nThermal moonquakes are extremely regular, occurring at sunrise and sunset as the surface swings between -173°C (night) and +127°C (day). This 300-degree temperature swing causes surface rocks and regolith to expand and crack audibly — detectable by sensitive seismometers.\n\nMeteoritic moonquakes are caused by meteoroid impacts. These provide information about both the current impact flux and the Moon\'s internal structure, since impact-generated waves travel through the interior along known paths.\n\nReanalysis of Apollo seismic data using modern algorithms has refined the Moon\'s interior model: a solid inner core of about 240 km radius, surrounded by a fluid outer core to about 330 km, with a partially molten zone in the deep mantle. New seismometers planned for Artemis and international missions will provide a three-dimensional seismic map of unprecedented detail.'},
+
+  {id:9,cat:'Geology',title:'Lunar Regolith: The Moon\'s Skin',
+   exc:'A layer of sharp, abrasive, electrostatically charged dust blankets every surface — the product of 4 billion years of meteorite pulverization.',
+   body:'Every surface on the Moon is blanketed by regolith — a layer of fragmented rock, mineral grains, glass beads, and cosmic dust produced by continuous meteorite bombardment. There is no exposed bedrock anywhere on the lunar surface. In the ancient highlands the regolith may be 15 meters deep; in the younger maria it averages 4 to 5 meters.\n\nThe regolith particles that make up lunar soil are fundamentally unlike terrestrial soil. On Earth, wind, water, and biological activity round and smooth particles over time. Lunar regolith particles are jagged, angular, and glassy — sharp at the microscopic scale because there has been no weathering or erosion for billions of years. Impact processes that created them also coated each grain with vapor-deposited chemical coatings from nearby vaporized rock.\n\nThese properties made dust one of the most persistent hazards of the Apollo program. Lunar dust adhered to spacesuits, scratched helmet visors, invaded mechanical joints, clogged filters, and degraded thermal surfaces. Apollo astronauts reported that the dust carried inside the lunar module smelled of gunpowder and caused nasal irritation similar to hay fever. Long-term inhalation of fine particles — in the 0.1 to 10 micrometer range — could cause progressive lung disease analogous to silicosis.\n\nThe regolith also contains a remarkable chemical archive. For billions of years solar wind particles have been implanted in the surfaces of regolith grains, making the soil a stratified record of the Sun\'s output history. Helium-3 — the non-radioactive helium isotope — is implanted at concentrations roughly one million times higher than in Earth\'s atmosphere. As a potential fusion reactor fuel, the regolith is estimated to contain enough helium-3 to power human civilization for thousands of years.\n\nFuture lunar construction may rely heavily on regolith as building material. Microwave sintering, 3D printing, and compaction techniques are all being developed to turn this abundant material into bricks, radiation shielding, and structural components for habitats.'},
+
+  {id:10,cat:'Exploration',title:'From Apollo to Artemis: A Century of Lunar Ambition',
+   exc:'Human engagement with the Moon has evolved from the Cold War space race to a new era of international cooperation and commercial partnership.',
+   body:'Human engagement with the Moon spans the full arc of the space age, from the first robotic probes of 1959 to the ongoing Artemis program targeting a sustainable human presence at the lunar south pole.\n\nThe Soviet Luna program achieved a series of firsts: the first spacecraft to escape Earth\'s gravitational sphere of influence (Luna 1, January 1959), the first to impact the Moon (Luna 2, September 1959), and the first photographs of the far side (Luna 3, October 1959). The United States responded with the Ranger, Surveyor, and Lunar Orbiter programs, which mapped and characterized the surface in preparation for human landing.\n\nApollo 11 landed Neil Armstrong and Buzz Aldrin in Mare Tranquillitatis on July 20, 1969 — one of the most watched events in human history. Five more successful landings followed through Apollo 17 in December 1972, placing a total of twelve astronauts on the surface and returning 382 kilograms of lunar samples that continue to be studied today. The Apollo 13 emergency — caused by an oxygen tank explosion en route to the Moon — became a defining story of human ingenuity under life-threatening pressure.\n\nAfter Apollo, the Soviet Union continued robotic exploration with Lunokhod rovers and Luna sample-return missions. Then both superpowers largely lost interest for two decades. The 1990s revival brought Clementine and Lunar Prospector mapping missions; the 2000s and 2010s brought a global resurgence with missions from Japan (SELENE), India (Chandrayaan), China (Chang\'e series), and ESA (SMART-1).\n\nChina\'s Chang\'e program has been particularly ambitious: Chang\'e-4 made the first landing on the far side in January 2019; Chang\'e-5 returned the first new lunar samples since 1976 in December 2020. China has announced a crewed lunar landing goal of 2030.\n\nNASA\'s Artemis program aims to establish a sustainable lunar presence centered on the south polar region, using a Gateway space station in lunar orbit, commercial lunar landers, and an eventual surface base as a proving ground for Mars missions.'},
+
+  {id:11,cat:'Geophysics',title:'Lunar Magnetic Anomalies: An Ancient Dynamo',
+   exc:'Magnetized rocks and localized crustal fields preserve the signature of a global lunar magnetic field that died 3.5 billion years ago.',
+   body:'The Moon today has no global magnetic field. A compass brought to the Moon would point in no consistent direction. Yet scattered across the lunar surface are regions of anomalously strong localized magnetism — and Apollo samples revealed that the Moon once had an active dynamo generating a field comparable in strength to Earth\'s.\n\nEvidence for the ancient dynamo comes from multiple sources. Lunar rocks returned by Apollo carry remanent magnetization — a magnetic signature frozen into place when the rocks cooled in the presence of an ambient field. Some samples formed 4.2 billion years ago and show magnetization consistent with fields of about 50 microtesla. Samples from 3.5 billion years ago show weaker magnetization, consistent with a field already decaying. This pattern indicates a dynamo active from about 4.25 billion years ago that gradually weakened as the lunar core cooled.\n\nThe mechanism driving the dynamo remains debated. A thermally driven convective dynamo is the simplest model but may have difficulty operating for the required duration given the Moon\'s small core size. More sophisticated models invoke compositional convection driven by inner core crystallization releasing lighter elements, or precession-driven turbulence in the outer core fluid induced by Earth\'s gravitational influence on the Moon\'s wobble.\n\nThe most spectacular surface expression of the ancient field is the phenomenon of lunar swirls — bright, sinuous surface patterns always associated with crustal magnetic anomalies. The most famous is Reiner Gamma in Oceanus Procellarum, visible through an amateur telescope. The magnetic field at swirl locations deflects solar wind, partially shielding the underlying soil from space weathering. Protected soil retains its original bright, optically immature appearance while surrounding terrain gradually darkens — creating the distinctive swirl pattern.\n\nThe origin of the crustal anomalies is debated: they may be remnants of the global dynamo field frozen in place as the crust cooled, or they may result from transient magnetic fields generated by large hypervelocity impacts.'},
+
+  {id:12,cat:'Atmosphere',title:'The Lunar Exosphere: Barely There',
+   exc:'The Moon\'s atmosphere is so thin its total mass is less than 10 tonnes — a wisp of noble gases, metal atoms, and levitated dust.',
+   body:'Every planet and large moon lacking a substantial atmosphere exists in an exospheric state — gas so tenuous that molecules almost never collide with each other before escaping into space. The Moon is the definitive example. Its total atmospheric mass is estimated at around 10,000 kilograms — less than a loaded truck. Compare this to Earth\'s atmosphere at 5,150 trillion tonnes.\n\nThis extreme tenuousness has fundamental consequences. The lunar exosphere transmits no sound, maintains no thermodynamic pressure, and provides no protection against solar radiation or micrometeorites. Individual molecules follow ballistic trajectories: they rise, arc across the surface, and fall back without ever encountering another molecule. The mean free path — the average distance a molecule travels between collisions — is effectively infinite.\n\nThe primary constituents detected include helium, neon, argon, hydrogen, sodium, and potassium. Helium and neon are continuously supplied by the solar wind, which implants ions into regolith grains. Radioactive decay of potassium-40 in the lunar interior produces argon-40, which seeps out through the crust. Sodium and potassium are sputtered from surface minerals by solar ultraviolet photons and can be detected spectroscopically from Earth — their bright emission lines appear in measurements of light scattered from the lunar exosphere.\n\nThe 2013 Lunar Atmosphere and Dust Environment Explorer (LADEE) mission made the most detailed exosphere measurements to date, confirming a permanent dust component. The lunar surface charges electrostatically through interaction with solar UV and solar wind: the day side charges positively, the night side negatively. Near the terminator, strong electric field gradients can levitate fine charged dust particles to altitudes of tens to hundreds of meters, creating a faint permanent dust exosphere — a phenomenon first suggested by observations of a glow on the lunar horizon during Apollo orbital sunrises.\n\nFor future habitats, this environment presents specific engineering challenges: dust settles on solar panels, optical sensors require dust-resistant coatings, and terminator-adjacent operations require electrostatic mitigation systems.'},
+
+  {id:13,cat:'Geology',title:'Lunar Lava Tubes: Ready-Made Shelters',
+   exc:'Ancient volcanic tunnels beneath the surface may offer natural radiation shielding, thermal stability, and ready-built spaces for human habitats.',
+   body:'Beneath the smooth volcanic plains of the Moon lie hollow tunnels of potentially extraordinary size — channels left behind when ancient lava rivers drained away, leaving the solidified roof intact. These lava tubes, similar in origin to those found in Hawaii and Iceland on Earth, have emerged as one of the most compelling potential sites for long-term human habitation beyond Earth.\n\nOn Earth, lava tubes form when the surface of a lava stream solidifies while molten rock continues flowing beneath. When the eruption ends and lava drains, an empty tube remains. Terrestrial tubes are typically tens of meters wide and stretch for kilometers. Lunar lava tubes are expected to be vastly larger due to the Moon\'s much weaker gravity — only 16.5% of Earth\'s. Under lower gravitational stress, the same rock thickness can span a much wider arch without collapsing. Theoretical calculations suggest stable diameters of hundreds of meters to several kilometers; some models allow spans up to five kilometers under lunar gravity.\n\nEvidence comes from radar data gathered by Japan\'s SELENE (Kaguya) spacecraft and gravity measurements from NASA\'s GRAIL mission. In 2017 Japanese researchers identified a candidate pit near the Marius Hills that may be a skylight — a collapsed roof opening to an intact underlying tube. The pit measures about 50 meters in diameter and 50 meters deep, with radar reflections suggesting extensive horizontal voids.\n\nThe appeal of lava tubes for habitation is extraordinary. Even a few meters of rock overhead would reduce cosmic radiation doses to levels comparable to Earth\'s surface. Interior temperatures would be stable around -20°C — extreme but manageable, and far preferable to the ±150°C swings of the surface. The rock overhead would stop all but the most energetic meteorites.\n\nIf pressurized with an artificial atmosphere, the pressure differential would actually help support the tube roof against gravity — potentially allowing a single tube to shelter thousands of people in a self-shielding enclosed environment.'},
+
+  {id:14,cat:'Planetary Science',title:'The Moon Stabilizes Earth\'s Axial Tilt',
+   exc:'Without the Moon, Earth\'s axial tilt could vary chaotically between 0° and 85° — making advanced life potentially impossible.',
+   body:'Earth\'s axial tilt of 23.4 degrees creates the seasons: a fundamental rhythm that drives climate, ecology, agriculture, and human civilization. This tilt is held in a relatively narrow range by a subtle but powerful gravitational influence: the Moon. Without it, Earth\'s climate history might have been dramatically and chaotically different.\n\nThe concept emerges from orbital mechanics. Like a spinning top beginning to wobble, Earth\'s rotation axis precesses — it traces a cone in space with a period of about 26,000 years, currently pointing near Polaris. The rate of precession depends on the gravitational torques exerted on Earth\'s equatorial bulge by the Moon, Sun, and other planets.\n\nIn 1993 French astronomers Jacques Laskar and Philippe Robutel published landmark calculations showing that without the Moon, Earth\'s axial obliquity could vary between 0° and 85° over timescales of tens of millions of years, driven by chaotic resonances with the orbital frequencies of the other planets — particularly Jupiter and Mars. At 0° obliquity there are no seasons; polar regions receive no direct sunlight and become permanently glaciated under vast ice sheets. At 85° obliquity the poles point nearly at the Sun during summer, creating catastrophic seasonal extremes far beyond anything Earth has experienced.\n\nWith the Moon present the calculation changes. The Moon\'s large mass — about 1/81 of Earth\'s — and relatively close orbit give the Earth-Moon system considerably larger angular momentum than Earth alone. This stiffens Earth\'s axial response, effectively damping the chaotic resonances that would otherwise drive large obliquity excursions. Simulations show that with the Moon, Earth\'s obliquity stays within roughly 22° to 24.5° — a narrow range producing the relatively mild seasonal pattern of the past several hundred million years during which complex multicellular life, forest ecosystems, and intelligence evolved.\n\nWhether complex life could have emerged without this stability is genuinely uncertain — but the Moon\'s gravitational guardianship of Earth\'s climate axis may be among its most profound contributions to life on our planet.'},
+
+  {id:15,cat:'Observation',title:'Lunar Transient Phenomena: Mystery Lights',
+   exc:'Centuries of reports describe fleeting glows, flashes, and color changes on the Moon — phenomena science is only beginning to explain.',
+   body:'For centuries astronomers have recorded strange and unexplained events on the lunar surface: brief flashes of light, reddish or bluish colorations over specific regions, obscuring mists appearing over familiar features, and glowing patches that appear for minutes or hours before fading. Collectively called Lunar Transient Phenomena (LTP), these observations have been dismissed by skeptics and taken seriously by others as evidence of ongoing geological or electrostatic activity.\n\nThe historical record is extensive. The monk Gervase of Canterbury described a dramatic event on June 18, 1178: the upper tip of the crescent Moon appearing to split and emit a flaming torch. Modern analysis suggests this description may correspond to the formation of the crater Giordano Bruno — a relatively young, fresh-rayed crater on the far side created perhaps 700 to 1,500 years ago.\n\nMore systematic LTP observation in the 18th, 19th, and 20th centuries accumulated hundreds of reports, with concentrations near the craters Aristarchus, Alphonsus, and Plato. In 1958 Soviet astronomer Nikolai Kozyrev obtained a spectrogram of what appeared to be an emission event in Alphonsus, showing spectral features he attributed to carbon gas outgassing — the first instrumental record of a possible LTP event.\n\nNASA commissioned a comprehensive LTP catalog in 1968. Analysis revealed clustering of reports near lunar perigee when tidal stresses are maximum — consistent with outgassing or tidal fracturing as a mechanism.\n\nModern understanding suggests several contributing mechanisms: outgassing of volatiles from subsurface pockets driven by tidal stress; electrostatic discharge at the terminator; and meteoroid impacts — which have been photographically recorded producing brief flashes during meteor showers. Monitoring programs now routinely document impact flashes on the dark side of the Moon using CCD cameras, cataloging dozens per year. The phenomena, once relegated to folklore, have become a legitimate frontier of observational lunar science.'},
+
+  {id:16,cat:'Exploration',title:'The Far Side: A Different World',
+   exc:'Permanently hidden from Earth, the far side\'s thick crust, cratered terrain, and radio silence make it one of the most scientifically valuable destinations in the solar system.',
+   body:'The far side of the Moon — often mistakenly called the dark side despite receiving equal sunlight — remained completely unknown until October 1959 when the Soviet Luna 3 spacecraft returned the first grainy photographs. What they showed surprised astronomers: a landscape strikingly different from the familiar near side.\n\nThe most immediately apparent difference is the near-complete absence of maria. On the near side, dark volcanic plains cover about 31% of the surface. On the far side they cover only about 2%. Instead the far side is dominated by ancient, densely cratered highlands extending in an unbroken sea of overlapping craters. The terrain represents some of the oldest surfaces in the solar system — ground that has been essentially unchanged for more than four billion years.\n\nThe cause lies in a fundamental structural asymmetry: the far side crust averages 60 to 70 kilometers thick while the near side averages only 30 to 40 kilometers. This was revealed by NASA\'s GRAIL gravity-mapping mission in 2012. The thicker far side crust prevented magma from reaching the surface during the period of intense volcanism, leaving it in the primordial cratered state while the near side was extensively resurfaced.\n\nThe South Pole-Aitken basin — the largest confirmed impact structure in the solar system at 2,500 kilometers diameter — occupies the southern far side. It may have excavated material from the deep mantle, making sample return from this region one of the highest priorities in planetary science.\n\nChina\'s Chang\'e-4 mission made the historic first soft landing on the far side in January 2019, touching down in Von Kármán crater within the South Pole-Aitken basin. The Yutu-2 rover remains operational, returning data about the unique geology.\n\nThe far side is also uniquely valuable for radio astronomy: shielded by 3,476 kilometers of solid rock from all of Earth\'s electromagnetic interference, a telescope on the far side could observe the universe at low radio frequencies impossible to access from Earth — opening an entirely unexplored observational window on the early universe.'},
+
+  {id:17,cat:'Engineering',title:'Lunar Dust: The Sticky, Invisible Hazard',
+   exc:'Sharp, electrostatically charged, microscopic — lunar dust clogs mechanisms, scratches optics, degrades spacesuits, and could damage lungs during extended exploration.',
+   body:'Of all the hazards facing human explorers on the Moon — vacuum, radiation, temperature extremes, meteorites — none proved more immediately troublesome to Apollo astronauts than lunar dust. After just a few hours on the surface, dust permeated every system it could reach and created problems that persisted throughout each mission.\n\nLunar dust is fundamentally unlike terrestrial dust in every important physical property. On Earth, wind, water, and biological processes round and smooth particles over geological time. Lunar dust particles are jagged, angular, and glassy — sharp at the microscopic scale because there has been no erosion of any kind for billions of years. Electron microscope images reveal grains that look like shattered glass with razor-sharp edges and surface coatings of exotic chemical compounds vapor-deposited by previous impacts.\n\nThe adhesion mechanisms are multiple and act simultaneously. Particles carry electrostatic charge imparted by solar UV and solar wind. Van der Waals forces — weak interatomic attractions that become significant at microscopic contact areas — bind particles to surfaces. The angular geometry causes mechanical interlocking between particles and between particles and surface textures. The result is adhesion that resists brushing, wiping, and shaking.\n\nThe operational consequences during Apollo were serious. Dust clouded helmet visors through scratching. It coated spacesuit surfaces and entered moving joints, threatening seal integrity. It degraded the performance of thermal radiators on equipment left on the surface. Apollo 17 astronaut Harrison Schmitt — a geologist who spent the most time collecting samples — suffered persistent nasal congestion and sneezing attributed to inhaled dust inside the lunar module.\n\nFor extended missions lasting weeks or months, dust management becomes an engineering challenge of the first order. NASA has invested heavily in electrostatic dust removal systems, specialized coating technologies, and suit designs that can tolerate repeated donning and doffing while maintaining seal integrity. The dust problem remains one of the most difficult unsolved engineering challenges of long-duration lunar exploration.'},
+
+  {id:18,cat:'Geophysics',title:'The Moon\'s Core: Iron and Deep Heat',
+   exc:'Reanalysis of Apollo seismic data revealed a layered lunar interior — a small iron core, partial melt zone, and asymmetric crust that explain the Moon\'s magnetic and geological history.',
+   body:'Like Earth, the Moon is differentiated — its interior is organized into concentric layers of different composition and density, with heavy materials concentrated at the center. However the Moon\'s interior is far cooler, simpler, and smaller-scaled than Earth\'s, reflecting its smaller mass, faster heat loss, and geologically quieter recent history.\n\nThe Moon\'s core was long suspected from its density and moment of inertia but confirmed with certainty only in the 21st century through improved analysis of Apollo seismic data and precise laser ranging measurements of lunar rotation. The core is small: a solid inner core of roughly 240 kilometers radius, surrounded by a fluid outer core extending to about 330 kilometers radius. These dimensions represent only about 20% of the Moon\'s total radius of 1,737 kilometers — far smaller proportionally than Earth\'s core at 55% of Earth\'s radius.\n\nThe core is composed primarily of iron, with lighter alloying elements — most likely sulfur — that lower the melting point and explain why the outer core remains fluid at the temperatures prevailing there today. The fluid outer core was confirmed by measurements of tidal deformation: a fully solid Moon would deform less under Earth\'s gravity than is actually observed. The slight excess deformation implies a layer that can flow and redistribution mass.\n\nAbove the core lies the mantle, probably composed of olivine and pyroxene in proportions consistent with a composition derived from a global magma ocean that solidified over tens to hundreds of millions of years after the Giant Impact. The deep mantle contains a partially molten zone — a relic of the ancient magma ocean — that accounts for the anomalously slow seismic wave velocities detected there.\n\nThe crust is strongly asymmetric: about 34 kilometers thick on the near side and 60 to 70 kilometers on the far side, as mapped by GRAIL. This asymmetry drives the concentration of volcanism and maria on the near side and explains the stark difference in geological character between the two hemispheres that has puzzled scientists since Luna 3 first photographed the far side in 1959.'},
+
+  {id:19,cat:'Geophysics',title:'Crustal Magnetism and Swirls',
+   exc:'Bright sinuous surface patterns called lunar swirls mark regions of anomalous crustal magnetism — relics of impacts, an ancient dynamo, or both.',
+   body:'Among the most visually striking and scientifically puzzling features on the lunar surface are the lunar swirls — bright, sinuous patterns of elevated reflectivity that stand out dramatically against surrounding darker terrain. They have no topographic expression; they are purely optical features. And they are invariably associated with localized regions of anomalously strong magnetic field embedded in the lunar crust.\n\nThe most famous example is Reiner Gamma in Oceanus Procellarum — a comet-shaped bright feature several hundred kilometers long, visible through a modest amateur telescope when the lighting conditions are favorable. Orbital magnetometers detect a strong, coherent magnetic field underlying the swirl, far more intense than the surrounding crust.\n\nThe connection between swirls and magnetic anomalies is well established. The leading explanation for the optical pattern involves space weathering: solar wind ions and micrometeorites continuously strike the lunar surface, gradually darkening and chemically altering the uppermost regolith — a process called optical maturation. Where a magnetic anomaly exists, the field deflects some incoming solar wind ions, providing a partial magnetic umbrella. Soil beneath this umbrella is partially shielded from space weathering and retains its original bright, immature appearance while surrounding terrain darkens. Over geological time this differential creates a pattern of bright and dark material that maps the three-dimensional structure of the subsurface field near the surface.\n\nThe origin of the anomalies themselves remains debated between two leading hypotheses. The dynamo remnant hypothesis proposes that the anomalies are patches of crust magnetized by the ancient global lunar field as it cooled. The impact magnetization hypothesis argues that hypervelocity impacts generate powerful transient magnetic fields — through shock compression, plasma dynamics, and ejecta magnetization — that permanently magnetize surrounding rocks even without a global field present. The observation that some of the strongest anomalies are antipodal to large impact basins supports at least a partial impact origin.'},
+
+  {id:20,cat:'Culture',title:'The Moon in Human Culture: Ancient to Modern',
+   exc:'No natural phenomenon has shaped human timekeeping, religion, mythology, art, and science more profoundly than the Moon\'s measured monthly cycle.',
+   body:'Of all objects in the sky, none has played a more pervasive or enduring role in human civilization than the Moon. Its regular phases provided the earliest natural clock — a period of approximately 29.5 days readable by any observer without instruments. This lunar month underlies dozens of ancient calendars and continues to organize the religious and civil life of over a billion people today.\n\nThe most immediate practical contribution of the Moon to civilization was as a calendar. Long before writing, the waxing and waning Moon provided a universally observable timekeeper that allowed ancient communities to plan agricultural activities, organize markets and festivals, and coordinate across distances. Many of the oldest written records — Babylonian clay tablets from the 5th millennium BCE — are essentially astronomical logs of lunar observations.\n\nReligious significance of the Moon spans all cultures. In ancient Mesopotamia the Moon god Sin (Nanna in Sumerian) was among the most powerful deities, governing time, wisdom, and the calendar. Ancient Egyptian Thoth — depicted with the Moon\'s crescent — was god of knowledge and measurement. Greek mythology identified the Moon with Selene and Artemis (Diana in Roman mythology) — the same name chosen for NASA\'s current lunar return program.\n\nIn Hindu tradition the Moon god Chandra governs the mind and emotions. Japanese Tsukimi moon-viewing festivals, still practiced today, are occasions for reflection and gratitude. The Mid-Autumn Festival — celebrated by over a billion people across East and Southeast Asia — is organized around the full moon nearest the autumn equinox.\n\nThe word "month" derives from "moon" through the Germanic root mōnaz. Words like menstrual, measure, and meter share an ancient Proto-Indo-European root related to lunar timekeeping. In Arabic, the names of the Islamic lunar months — including Ramadan, whose beginning is declared by official moon sighting — are still in daily use across the Islamic world.\n\nThe full moon has been linked in folklore to unusual human behavior for millennia, though rigorous scientific studies of psychiatric admissions, crime statistics, birth rates, and accident rates find no consistent correlation with lunar phase. The apparent pattern reflects a cognitive bias: memorable events near a bright full moon are more strongly encoded in memory, creating the impression of a causal connection.\n\nIn art and literature the Moon has inspired an unbroken creative tradition from Sappho to Shakespeare to Beethoven to Pink Floyd. In science it provided Newton the key insight for universal gravitation and gave Einstein a testbed for general relativity through the precise measurement of lunar orbital precession. Today, through the Artemis program, the Moon is once again the frontier of human ambition — now pursued not by rival superpowers but by an unprecedented international coalition aiming to stay.'}
+];
+
+function renderArticles(){
+  var grid=el('artGrid'); if(!grid) return;
+  var frag=document.createDocumentFragment();
+  ARTICLES.forEach(function(art,idx){
+    var card=document.createElement('article');
+    card.className='glass art-card rv';
+    card.setAttribute('role','listitem');
+    card.setAttribute('tabindex','0');
+    card.setAttribute('aria-label','Read: '+art.title);
+    card.innerHTML=
+      '<span class="art-n">'+String(idx+1).padStart(2,'0')+'</span>'+
+      '<span class="art-cat">'+art.cat+'</span>'+
+      '<h3 class="art-title">'+art.title+'</h3>'+
+      '<p class="art-exc">'+art.exc+'</p>'+
+      '<span class="art-more">Read Article</span>';
+    card.addEventListener('click',function(){ openArticle(art); });
+    card.addEventListener('keydown',function(e){
+      if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openArticle(art); }
+    });
+    frag.appendChild(card);
+  });
+  grid.appendChild(frag);
+}
+
+function openArticle(art){
+  var modal=el('artModal'),bd=el('mBd');
+  el('mCat').textContent=art.cat;
+  el('mTitle').textContent=art.title;
+  var ps=art.body.split(/\n\n+/).filter(function(p){return p.trim();});
+  el('mBody').innerHTML=ps.map(function(p){return '<p>'+p.trim()+'</p>';}).join('');
+  modal.classList.add('on'); bd.classList.add('on');
+  modal.setAttribute('aria-hidden','false'); bd.setAttribute('aria-hidden','false');
+  ST.modalOpen=true; document.body.style.overflow='hidden';
+  setTimeout(function(){var x=el('mX');if(x)x.focus();},80);
+}
+
+function closeArticle(){
+  var modal=el('artModal'),bd=el('mBd');
+  modal.classList.remove('on'); bd.classList.remove('on');
+  modal.setAttribute('aria-hidden','true'); bd.setAttribute('aria-hidden','true');
+  ST.modalOpen=false; document.body.style.overflow='';
+}
+
+/* ── EMBED ────────────────────────────────────── */
+function openEmbed(){
+  var modal=el('embModal'),bd=el('mBd');
+  el('embCode').textContent='<iframe\n  src="https://mohamed005cheikh-rgb.github.io/moon-prototype.vol2/widget.html"\n  width="220" height="270"\n  frameborder="0"\n  style="border:none;background:transparent"\n  title="Moon Phase Widget"\n  allow="geolocation">\n</iframe>';
+  modal.classList.add('on'); bd.classList.add('on');
+  modal.setAttribute('aria-hidden','false'); bd.setAttribute('aria-hidden','false');
+  ST.modalOpen=true; document.body.style.overflow='hidden';
+  setTimeout(function(){var x=el('copyBtn');if(x)x.focus();},80);
+}
+
+function closeEmbed(){
+  var modal=el('embModal'),bd=el('mBd');
+  modal.classList.remove('on'); bd.classList.remove('on');
+  modal.setAttribute('aria-hidden','true'); bd.setAttribute('aria-hidden','true');
+  ST.modalOpen=false; document.body.style.overflow='';
+}
+
+/* ── TOAST ────────────────────────────────────── */
+function toast(msg){
+  var t=el('toast'); if(!t) return;
+  t.textContent=msg; t.classList.add('on');
+  clearTimeout(ST._toastT);
+  ST._toastT=setTimeout(function(){t.classList.remove('on');},2600);
+}
+
+/* ── THEME ────────────────────────────────────── */
+function setTheme(theme){
+  var valid=['supermoon','bloodmoon','bluemoon','eclipse'];
+  if(valid.indexOf(theme)<0) return;
+  document.body.className='tm-'+theme;
+  ST.theme=theme;
+  document.querySelectorAll('[data-theme]').forEach(function(b){
+    var on=b.dataset.theme===theme;
+    b.classList.toggle('on',on);
+    if(b.hasAttribute('aria-pressed')) b.setAttribute('aria-pressed',on?'true':'false');
+  });
+  ST.lastPhase=-99; renderMoon();
+  try{localStorage.setItem('mc3-theme',theme);}catch(e){}
+}
+
+/* ── MENU ─────────────────────────────────────── */
+function openMenu(){
+  var d=el('navDrawer'),o=el('navOvl'),b=el('menuBtn');
+  d.classList.add('on'); o.classList.add('on');
+  d.setAttribute('aria-hidden','false'); b.setAttribute('aria-expanded','true');
+  b.classList.add('open'); ST.menuOpen=true;
+  d.querySelectorAll('.nav-a').forEach(function(l){l.removeAttribute('tabindex');});
+  setTimeout(function(){var f=d.querySelector('.nav-a');if(f)f.focus();},60);
+}
+function closeMenu(){
+  var d=el('navDrawer'),o=el('navOvl'),b=el('menuBtn');
+  d.classList.remove('on'); o.classList.remove('on');
+  d.setAttribute('aria-hidden','true'); b.setAttribute('aria-expanded','false');
+  b.classList.remove('open'); ST.menuOpen=false;
+  d.querySelectorAll('.nav-a').forEach(function(l){l.setAttribute('tabindex','-1');});
+}
+
+/* ── GEOLOCATION ──────────────────────────────── */
+function showGeoOverlay(){
+  var o=el('geoOverlay'); if(o) o.classList.add('show');
+}
+function hideGeoOverlay(){
+  var o=el('geoOverlay'); if(o) o.classList.remove('show');
+}
+
+function requestGeo(){
+  hideGeoOverlay();
+  ST.geoAsked=true;
+
+  var askBtn=el('geoAskBtn');
+  var geoSt=el('geoSt');
+  if(askBtn) askBtn.style.display='none';
+  if(geoSt) geoSt.style.display='flex';
+
+  var dot=el('gDot'),txt=el('gTxt');
+  if(dot){ dot.className='g-dot spin'; }
+  if(txt) txt.textContent='Locating…';
+
+  if(!navigator.geolocation){
+    if(dot) dot.className='g-dot err';
+    if(txt) txt.textContent='Location not supported — using London';
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    function(pos){
+      ST.lat=pos.coords.latitude; ST.lon=pos.coords.longitude; ST.geoOk=true;
+      if(dot) dot.className='g-dot ok';
+      if(txt) txt.textContent=ST.lat.toFixed(2)+'°, '+ST.lon.toFixed(2)+'°';
+      updateUI();
+      toast('Location found — moonrise/set updated!');
+    },
+    function(err){
+      if(dot) dot.className='g-dot err';
+      var msg=err.code===1?'Location denied — using London':'Location unavailable — using London';
+      if(txt) txt.textContent=msg;
+    },
+    {timeout:10000, maximumAge:600000}
+  );
+}
+
+function skipGeo(){
+  hideGeoOverlay();
+  ST.geoAsked=true;
+  var askBtn=el('geoAskBtn');
+  var geoSt=el('geoSt');
+  if(askBtn) askBtn.style.display='none';
+  if(geoSt){
+    geoSt.style.display='flex';
+    var dot=el('gDot'),txt=el('gTxt');
+    if(dot) dot.className='g-dot err';
+    if(txt) txt.textContent='Using London, UK (default)';
+  }
+}
+
+/* ── PRINT ────────────────────────────────────── */
+function doPrint(){
+  var now=new Date();
+  var phase=lunarPhase(now);
+  var illum=lunarIllum(now);
+  var dist=lunarDist(now);
+  var rs=moonRiseSet(now,ST.lat,ST.lon);
+  var hd=hijriDate(now);
+  var evts=nextEvents(phase);
+  var h='<html><head><title>moon.c Lunar Report</title><style>body{font-family:Georgia,serif;max-width:600px;margin:40px auto;color:#111;padding:0 20px}h1{border-bottom:2px solid #111;padding-bottom:12px;margin-bottom:20px}h2{margin:22px 0 8px}p{margin:5px 0}footer{margin-top:40px;color:#777;font-size:.85rem;border-top:1px solid #ccc;padding-top:14px}</style></head><body>';
+  h+='<h1>moon.c — Lunar Report</h1>';
+  h+='<p style="color:#555">Generated: '+now.toLocaleString()+'</p>';
+  if(hd) h+='<p><strong>Hijri Date:</strong> '+hd+'</p>';
+  h+='<h2>Phase</h2><p><strong>'+phaseName(phase)+'</strong> — '+lunarIllum(phase).toFixed(1)+'% illuminated</p>';
+  h+='<p>Lunar age: '+(phase*SYNODIC).toFixed(1)+' days since New Moon</p>';
+  h+='<h2>Orbital Data</h2>';
+  h+='<p><strong>Distance:</strong> '+dist.toLocaleString()+' km</p>';
+  h+='<p><strong>Velocity:</strong> '+lunarVel(phase)+' km/s</p>';
+  h+='<h2>Visibility ('+(ST.geoOk?ST.lat.toFixed(2)+'°, '+ST.lon.toFixed(2)+'°':'London, UK default')+')</h2>';
+  h+='<p><strong>Moonrise:</strong> '+rs.rise+' &nbsp;|&nbsp; <strong>Moonset:</strong> '+rs.set+'</p>';
+  h+='<h2>Next Events</h2>';
+  evts.slice(0,4).forEach(function(e){h+='<p>'+e.name+': in '+e.days.toFixed(1)+' days</p>';});
+  h+='<footer>Algorithms: Jean Meeus — Astronomical Algorithms<br>Copyright: mohamed005cheikh@gmail.com | by MC88 | Version 3.2.0</footer>';
+  h+='</body></html>';
+  var w=window.open('','_blank','width=700,height=900');
+  if(w){w.document.write(h);w.document.close();w.focus();w.print();}
+}
+
+/* ── REVEAL ───────────────────────────────────── */
+function initReveal(){
+  if(!('IntersectionObserver' in window)){
+    document.querySelectorAll('.rv').forEach(function(e){e.classList.add('vis');});
+    return;
+  }
+  var obs=new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      if(en.isIntersecting){en.target.classList.add('vis');obs.unobserve(en.target);}
+    });
+  },{threshold:0.07,rootMargin:'0px 0px -25px 0px'});
+  document.querySelectorAll('.rv').forEach(function(e){obs.observe(e);});
+}
+
+/* ── FOCUS TRAP ───────────────────────────────── */
+function trapFocus(modal){
+  modal.addEventListener('keydown',function(e){
+    if(e.key!=='Tab') return;
+    var nodes=modal.querySelectorAll('button,a,input,[tabindex]:not([tabindex="-1"])');
+    var first=nodes[0],last=nodes[nodes.length-1];
+    if(e.shiftKey){if(document.activeElement===first){e.preventDefault();last.focus();}}
+    else{if(document.activeElement===last){e.preventDefault();first.focus();}}
+  });
+}
+
+/* ── COPY ─────────────────────────────────────── */
+function copyText(text){
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(text).then(function(){toast('Copied to clipboard!');}).catch(function(){legacyCopy(text);});
+  } else { legacyCopy(text); }
+}
+function legacyCopy(text){
+  var ta=document.createElement('textarea');
+  ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  document.execCommand('copy'); document.body.removeChild(ta);
+  toast('Copied!');
+}
+
+/* ── SERVICE WORKER ───────────────────────────── */
+function registerSW(){
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').catch(function(){});
+  }
+}
+
+/* ── SHARE ────────────────────────────────────── */
+function initShare(){
+  var btn=el('shareBtn'); if(!btn) return;
+  if(navigator.share){
+    btn.style.display='flex';
+    btn.addEventListener('click',function(){
+      navigator.share({title:'moon.c',text:'Real-time lunar mechanics.',url:location.href}).catch(function(){});
+    });
+  }
+}
+
+/* ── EVENTS ───────────────────────────────────── */
+function bindEvents(){
+  /* Menu */
+  var mb=el('menuBtn'),nx=el('navX'),no=el('navOvl');
+  if(mb) mb.addEventListener('click',function(){ST.menuOpen?closeMenu():openMenu();});
+  if(nx) nx.addEventListener('click',closeMenu);
+  if(no) no.addEventListener('click',closeMenu);
+  document.querySelectorAll('.nav-a').forEach(function(l){l.addEventListener('click',closeMenu);});
+
+  /* Backdrop */
+  var bd=el('mBd');
+  if(bd) bd.addEventListener('click',function(){closeArticle();closeEmbed();});
+
+  /* Modal closes */
+  var mx=el('mX'); if(mx) mx.addEventListener('click',closeArticle);
+  var ex=el('embX'); if(ex) ex.addEventListener('click',closeEmbed);
+
+  /* Focus traps */
+  var am=el('artModal'),em=el('embModal');
+  if(am) trapFocus(am);
+  if(em) trapFocus(em);
+
+  /* Themes */
+  document.querySelectorAll('[data-theme]').forEach(function(b){
+    b.addEventListener('click',function(){
+      setTheme(b.dataset.theme);
+      if(b.classList.contains('nav-thbtn')||b.classList.contains('apply')) closeMenu();
+    });
+  });
+
+  /* Calendar */
+  var cp=el('calPrev'),cn=el('calNext');
+  if(cp) cp.addEventListener('click',function(){
+    ST.calM--; if(ST.calM<0){ST.calM=11;ST.calY--;} buildCalendar();
+  });
+  if(cn) cn.addEventListener('click',function(){
+    ST.calM++; if(ST.calM>11){ST.calM=0;ST.calY++;} buildCalendar();
+  });
+
+  /* Header buttons */
+  var pb=el('printBtn'); if(pb) pb.addEventListener('click',doPrint);
+  var eb=el('embedBtn'); if(eb) eb.addEventListener('click',openEmbed);
+
+  /* Copy embed */
+  var cb=el('copyBtn');
+  if(cb) cb.addEventListener('click',function(){
+    var code=el('embCode'); if(code) copyText(code.textContent);
+  });
+
+  /* Geo */
+  var gab=el('geoAllowBtn'); if(gab) gab.addEventListener('click',requestGeo);
+  var gsb=el('geoSkipBtn');  if(gsb) gsb.addEventListener('click',skipGeo);
+  var gBtn=el('geoAskBtn');
+  if(gBtn) gBtn.addEventListener('click',showGeoOverlay);
+
+  /* Keyboard */
+  document.addEventListener('keydown',function(e){
+    if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
+    if(e.key==='Escape'){
+      if(ST.modalOpen){closeArticle();closeEmbed();}
+      else if(ST.menuOpen) closeMenu();
+    }
+    if(e.key==='1') setTheme('supermoon');
+    if(e.key==='2') setTheme('bloodmoon');
+    if(e.key==='3') setTheme('bluemoon');
+    if(e.key==='4') setTheme('eclipse');
+  });
+
+  /* Resize */
+  var rt;
+  window.addEventListener('resize',function(){
+    clearTimeout(rt); rt=setTimeout(function(){initStars();},250);
+  });
+
+  /* Visibility */
+  document.addEventListener('visibilitychange',function(){
+    if(!document.hidden) updateUI();
+  });
+}
+
+/* ══════════════════════════════════════════════
+   BOOT SEQUENCE
+══════════════════════════════════════════════ */
+function boot(){
+  /* Restore theme */
+  try{var t=localStorage.getItem('mc3-theme');if(t) setTheme(t);}catch(e){}
+
+  /* Stars */
+  initStars();
+  requestAnimationFrame(drawStars);
+
+  /* Loader progress animation */
+  var msgs=LOADERMSGS, mi=0;
+  advanceLoader(10, msgs[mi]);
+  var lInterval=setInterval(function(){
+    mi++; if(mi<msgs.length-1){
+      advanceLoader(10+mi*(70/msgs.length), msgs[mi]);
+    }
+  },400);
+
+  /* Render moon procedurally immediately */
+  advanceLoader(40,'Rendering lunar surface…');
+  renderMoon();
+
+  /* Load texture async */
+  advanceLoader(55,'Loading lunar texture…');
+  loadTexture();
+
+  /* Run calculations */
+  advanceLoader(70,'Computing phase data…');
+  updateUI();
+
+  /* Render articles */
+  advanceLoader(85,'Loading articles…');
+  renderArticles();
+
+  /* Finalize */
+  advanceLoader(95,'Almost ready…');
+
+  /* Hide loader after 1.6s minimum (gives animation time to look good) */
+  setTimeout(function(){
+    clearInterval(lInterval);
+    advanceLoader(100,'');
+    setTimeout(hideLoader, 350);
+  }, 1600);
+
+  /* Start timers */
+  ST._countT=setInterval(tickCountdown,1000);
+  ST._mainT=setInterval(updateUI,60000);
+
+  /* Events */
+  bindEvents();
+  initShare();
+  initReveal();
+  registerSW();
+
+  /* Show geo overlay after a brief delay so user sees the app first */
+  setTimeout(function(){
+    if(!ST.geoAsked) showGeoOverlay();
+  }, 2200);
+}
+
+/* ─── Init on DOMContentLoaded ─── */
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',boot);
+} else {
+  boot();
+}
+
+})();
+</script>
+</body>
+                                                                                </html>
