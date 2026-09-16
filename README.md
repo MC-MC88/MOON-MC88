@@ -19,7 +19,7 @@ Mais l'outil va plus loin qu'un simple calcul. Il vous dit quand la Lune se lèv
 Et il change d'ambiance. Quatre thèmes correspondent aux grands rendez-vous lunaires — Supermoon, Blood Moon, Blue Moon, Eclipse — pour que la nuit ne ressemble jamais tout à fait à la précédente.
 
 ---
-
+<!-- 
 ## 📸 Un aperçu
 
 <div align="center">
@@ -45,7 +45,7 @@ Et il change d'ambiance. Quatre thèmes correspondent aux grands rendez-vous lun
 </div>
 
 ---
-
+-->
 ## ✨ Ce que vous trouverez
 
 **La Lune, telle qu'elle est en ce moment.**  
